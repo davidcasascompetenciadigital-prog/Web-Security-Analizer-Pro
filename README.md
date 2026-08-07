@@ -67,3 +67,12 @@ pip install -r requirements.txt
 
 # 5. Ejecutar el analizador
 python web_analyzer_visual.py
+
+### Instalación sin entorno virtual (global)
+```bash
+# Instalar dependencias globalmente
+pip install rich requests
+
+# Ejecutar
+python web_analyzer_visual.py
+

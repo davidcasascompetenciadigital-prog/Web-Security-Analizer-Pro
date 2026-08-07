@@ -10,6 +10,8 @@
 
 **Web Security Analyzer Pro** es una herramienta avanzada de análisis de seguridad web que examina cabeceras HTTP, cookies, vulnerabilidades comunes y configuración SSL/TLS. Diseñado para administradores de sistemas, desarrolladores y profesionales de seguridad que necesitan auditar sus sitios web de forma rápida y eficiente.
 
+El script Web Security Analyzer Pro realiza un análisis exhaustivo de seguridad web sin consultas externas, basándose únicamente en la respuesta HTTP y el contenido de la página. Comprueba cabeceras HTTP (HSTS, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, CSP, Referrer-Policy), cookies (flags Secure, HttpOnly y SameSite), SSL/TLS (versión del protocolo y validez del certificado), vulnerabilidades comunes (Clickjacking, MIME sniffing, XSS, información del servidor expuesta), contenido HTML (metadatos, títulos, recursos como CSS, JS e imágenes), tecnologías detectadas y genera una puntuación de seguridad con recomendaciones de remediación. Los CVEs mostrados son simulados (datos hardcodeados) y el script no consulta bases de datos externas como NVD, VirusTotal o Shodan, aunque sería interesante integrarlas, no?.
+
 ### 🎯 Características Principales
 
 - ✅ **Análisis completo de cabeceras HTTP**

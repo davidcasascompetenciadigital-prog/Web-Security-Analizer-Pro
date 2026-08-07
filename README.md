@@ -76,3 +76,31 @@ pip install rich requests
 # Ejecutar
 python web_analyzer_visual.py
 
+Dependencias
+
+    requests >= 2.28.0
+    rich >= 13.0.0
+
+$ python web_analyzer_visual.py
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║   ██╗    ██╗███████╗██████╗     ███████╗███████╗ ██████╗██╗   ██╗██████╗   ║
+║   ██║    ██║██╔════╝██╔══██╗    ██╔════╝██╔════╝██╔════╝██║   ██║██╔══██╗  ║
+║   ██║ █╗ ██║█████╗  ██████╔╝    ███████╗█████╗  ██║     ██║   ██║██████╔╝  ║
+║   ██║███╗██║██╔══╝  ██╔══██╗    ╚════██║██╔══╝  ██║     ██║   ██║██╔══██╗  ║
+║   ╚███╔███╔╝███████╗██████╔╝    ███████║███████╗╚██████╗╚██████╔╝██║  ██║  ║
+║    ╚══╝╚══╝ ╚══════╝╚═════╝     ╚══════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝  ║
+║                                                                              ║
+║                    🔍 Análisis Web de Seguridad Pro                          ║
+║                   Interactive Security Scanner v2.0                         ║
+║                                                                              ║
+║               Autor: David Casas M. - Competencia Digital                   ║
+║               Licencia: CC BY-NC 4.0                                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+[bold cyan]Selecciona una opción[/bold cyan] [1/2/3/4/5/6/7] (1): 1
+
+[bold]Ingresa la URL a analizar[/bold]: https://www.website.com
+
+

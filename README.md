@@ -99,8 +99,142 @@ $ python web_analyzer_visual.py
 ║               Licencia: CC BY-NC 4.0                                       ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
+
+
 [bold cyan]Selecciona una opción[/bold cyan] [1/2/3/4/5/6/7] (1): 1
 
 [bold]Ingresa la URL a analizar[/bold]: https://www.website.com
 
+El modo interactivo te guiará a través de un menú con las siguientes opciones:
 
+    Analizar nueva URL
+    Ver cabeceras HTTP
+    Análisis de seguridad
+    Vulnerabilidades encontradas
+    CVEs detectados
+    Generar reporte
+    Salir
+
+Reportes Generados
+
+Los reportes se guardan automáticamente en formato JSON:
+{
+  "url": "https://www.website.com",
+  "timestamp": "2026-08-07T19:33:46.123456",
+  "status": 200,
+  "headers": {
+    "server": "nginx",
+    "content-type": "text/html; charset=utf-8",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "x-frame-options": "DENY",
+    "x-content-type-options": "nosniff",
+    "x-xss-protection": "1; mode=block",
+    "referrer-policy": "strict-origin-when-cross-origin"
+  },
+  "vulnerabilities": [
+    {
+      "type": "HSTS no configurado",
+      "severity": "Media",
+      "description": "HTTP Strict Transport Security no está habilitado",
+      "remediation": "Agregar header Strict-Transport-Security con max-age"
+    }
+  ],
+  "score": "4/6"
+}
+
+Interpretación de Resultados
+
+Cabeceras de Seguridad
+Cabecera	Función	Recomendación
+Strict-Transport-Security	Fuerza HTTPS	Configurar con max-age ≥ 31536000
+X-Frame-Options	Previene Clickjacking	Usar DENY o SAMEORIGIN
+X-Content-Type-Options	Previene MIME sniffing	Usar nosniff
+X-XSS-Protection	Protección contra XSS	Usar 1; mode=block
+Content-Security-Policy	Política de seguridad	Implementar según necesidades
+Referrer-Policy	Control de información de referencia	Usar strict-origin-when-cross-origin
+
+Niveles de Severidad
+
+    🟢 Baja: Recomendaciones de mejora
+    🟡 Media: Configuraciones mejorables
+    🟠 Alta: Vulnerabilidades importantes
+    🔴 Crítica: Riesgos de seguridad graves
+
+Puntuación de Seguridad
+
+    90-100%: 🟢 Excelente - Seguridad robusta
+    70-89%: 🟡 Bueno - Mejorable
+    50-69%: 🟠 Regular - Atención requerida
+    0-49%: 🔴 Deficiente - Acción inmediata
+
+Contribuciones
+
+Las contribuciones son bienvenidas. Por favor:
+
+    Haz un Fork del proyecto
+    Crea tu rama de características (git checkout -b feature/AmazingFeature)
+    Commit tus cambios (git commit -m 'Add some AmazingFeature')
+    Push a la rama (git push origin feature/AmazingFeature)
+    Abre un Pull Request
+
+Buenas Prácticas
+
+Consideraciones de Seguridad
+
+    Autorización: Solo analiza sitios web sobre los que tengas permiso explícito
+    Uso Responsable: Esta herramienta es para auditoría y aprendizaje
+    Privacidad: No almacena información personal de los sitios analizados
+
+Recomendaciones
+
+    Entorno Virtual: Siempre usa venv para evitar conflictos de dependencias
+    Actualizaciones: Mantén las dependencias actualizadas
+    Pruebas: Verifica el script en un entorno de prueba antes de usarlo en producción
+    Documentación: Documenta tus hallazgos y configuraciones
+
+Reporte de Errores
+
+Si encuentras algún error, por favor crea un issue en GitHub con:
+
+    Descripción del problema
+
+    Pasos para reproducirlo
+
+    Versión de Python y sistema operativo
+
+    Salida de error completa
+
+    URL analizada (si es pública)
+
+Aviso Legal
+
+Esta herramienta se proporciona "tal cual", sin garantías de ningún tipo. El autor no se hace responsable del mal uso de la herramienta. Úsala de manera responsable y ética.
+
+IMPORTANTE: El análisis de seguridad de sitios web sin autorización explícita puede ser ilegal en muchas jurisdicciones. Asegúrate de tener permiso antes de analizar cualquier sitio que no sea de tu propiedad.
+
+Agradecimientos
+
+    A la comunidad de Python por las excelentes librerías
+
+    A los contribuidores y colaboradores
+
+    A los usuarios que reportan bugs y sugieren mejoras
+
+    A la comunidad de Odoo por sus valiosas contribuciones a la seguridad
+
+Estado del Proyecto
+
+Métrica	Estado
+Versión	1.0.0
+Estado	Estable
+Pruebas	✅ Pasadas
+Documentación	✅ Completa
+Soporte	Activo
+
+Enlaces Útiles
+
+    OWASP Top 10
+    Security Headers
+    SSL Labs
+    HSTS Preload
+    Mozilla Observatory

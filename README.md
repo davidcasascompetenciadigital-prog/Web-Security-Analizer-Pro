@@ -222,7 +222,7 @@ Agradecimientos
 
     A los usuarios que reportan bugs y sugieren mejoras
 
-    A la comunidad de Odoo por sus valiosas contribuciones a la seguridad
+    A la comunidad de Odoo por sus valiosas contribuciones a la seguridadUpdate
 
 Estado del Proyecto
 
@@ -241,5 +241,4 @@ Enlaces Útiles
     HSTS Preload
     Mozilla Observatory
 
-<img width="881" height="495" alt="image" src="https://github.com/user-attachments/assets/de41e245-309e-4c36-99ef-a863bd3b2524" />
 

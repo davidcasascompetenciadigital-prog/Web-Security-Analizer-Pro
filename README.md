@@ -240,3 +240,6 @@ Enlaces Útiles
     SSL Labs
     HSTS Preload
     Mozilla Observatory
+
+<img width="881" height="495" alt="image" src="https://github.com/user-attachments/assets/de41e245-309e-4c36-99ef-a863bd3b2524" />
+

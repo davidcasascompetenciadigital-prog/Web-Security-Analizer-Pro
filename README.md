@@ -25,7 +25,7 @@
 
 **David Casas M.**  
 Competencia Digital  
-[GitHub](https://github.com/tu-usuario) | [LinkedIn](https://linkedin.com/in/tu-perfil)
+[LinkedIn](https://es.linkedin.com/in/davidcasas-competenciadigital/es)
 
 ## 📄 Licencia
 

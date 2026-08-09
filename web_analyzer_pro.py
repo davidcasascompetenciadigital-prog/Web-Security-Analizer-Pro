@@ -7,42 +7,266 @@ Autor: David Casas M. - Competencia Digital
 Licencia: CC BY-NC 4.0
 """
 
-import requests
+import argparse
 import json
-import time
-import ssl
-import socket
+import os
 import re
-from urllib.parse import urlparse, parse_qs, urljoin
-from datetime import datetime
+import sys
+import time
 from collections import defaultdict
-from typing import Dict, List, Optional
-import warnings
-warnings.filterwarnings('ignore')
+from datetime import datetime
+from urllib.parse import urlparse
+
+import requests
 
 # Librerías para interfaz visual
 try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
-    from rich.prompt import Prompt, Confirm
     from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+    from rich.prompt import Confirm, Prompt
+    from rich.table import Table
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
     print("⚠️  Rich no está instalado. Instalando...")
     import subprocess
     subprocess.check_call(['pip', 'install', 'rich'])
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
-    from rich.prompt import Prompt, Confirm
     from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+    from rich.prompt import Confirm, Prompt
+    from rich.table import Table
     RICH_AVAILABLE = True
 
 console = Console()
+
+# ===== Configuración NVD (National Vulnerability Database) =====
+NVD_API_URL = 'https://services.nvd.nist.gov/rest/json/cves/2.0'
+NVD_CACHE_DIR = '.cache'
+NVD_CACHE_FILE = 'nvd_cves.json'
+NVD_REQUEST_INTERVAL = 6.0
+NVD_RATE_LIMIT_WAIT = 30.0
+NVD_TIMEOUT = 15
+
+# Mapa de tecnologías detectadas -> (vendor, product) del CPE 2.3
+CPE_MAP = {
+    'nginx': ('nginx', 'nginx'),
+    'apache': ('apache', 'http_server'),
+    'php': ('php', 'php'),
+    'asp.net': ('microsoft', 'asp_net_core'),
+    'wordpress': ('wordpress', 'wordpress'),
+}
+
+VERSION_REGEX = re.compile(r'\d+(?:\.\d+){1,3}')
+
+# Última hora de petición a NVD (throttling >= 6s entre requests)
+_last_nvd_request_time = 0.0
+
+
+def cookie_has_attr(cookie, attr_name, response):
+    """Detecta un atributo de cookie de forma insensible a mayúsculas.
+
+    - Escanea cookie._rest (http.cookiejar conserva la capitalización
+      original, p.ej. 'HttpOnly').
+    - Fallback: busca el atributo en las cabeceras Set-Cookie crudas con
+      regex de límite de palabra (IGNORECASE).
+    """
+    attr = attr_name.lower()
+    for key in getattr(cookie, '_rest', {}):
+        if str(key).lower() == attr:
+            return True
+    if response is not None:
+        raw_values = []
+        headers = getattr(response, 'headers', None)
+        if headers is not None:
+            getlist = getattr(headers, 'getlist', None)
+            if getlist is not None:
+                raw_values.extend(getlist('Set-Cookie'))
+            else:
+                single = headers.get('Set-Cookie')
+                if single:
+                    raw_values.append(single)
+        raw_headers = getattr(getattr(response, 'raw', None), 'headers', None)
+        if raw_headers is not None:
+            getlist = getattr(raw_headers, 'getlist', None)
+            if getlist is not None:
+                raw_values.extend(getlist('Set-Cookie'))
+        for raw in raw_values:
+            if raw and re.search(r'\b' + re.escape(attr_name) + r'\b', raw, re.IGNORECASE):
+                return True
+    return False
+
+
+def build_cpe(vendor, product, version):
+    """Construye un identificador CPE 2.3 para consultar NVD."""
+    return f'cpe:2.3:a:{vendor}:{product}:{version}:*:*:*:*:*:*:*'
+
+
+def extract_version(text):
+    """Extrae la primera versión numérica (p.ej. 1.18.0) de un texto."""
+    if not text:
+        return None
+    match = VERSION_REGEX.search(text)
+    return match.group(0) if match else None
+
+
+def detect_technologies(response, html):
+    """Detecta tecnologías (name/vendor/product/version) desde cabeceras y meta generator."""
+    techs = []
+    seen = set()
+    headers = getattr(response, 'headers', {}) or {}
+
+    candidates = []
+    if 'server' in headers:
+        candidates.append(headers['server'])
+    if 'x-powered-by' in headers:
+        candidates.append(headers['x-powered-by'])
+    if html:
+        meta = re.search(
+            r'<meta\s+name=["\']generator["\']\s+content=["\']([^"\']+)["\']',
+            html, re.IGNORECASE
+        )
+        if meta:
+            candidates.append(meta.group(1))
+
+    for text in candidates:
+        text_lower = text.lower()
+        for tech, (vendor, product) in CPE_MAP.items():
+            if tech in text_lower and tech not in seen:
+                seen.add(tech)
+                techs.append({
+                    'name': tech,
+                    'vendor': vendor,
+                    'product': product,
+                    'version': extract_version(text),
+                })
+                break
+    return techs
+
+
+def load_nvd_cache(path):
+    """Carga el caché NVD. Ante corrupción devuelve un diccionario vacío."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get('schema_version') == 1:
+            return data
+        return {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_nvd_cache(path, data):
+    """Persiste el caché NVD (write-through)."""
+    try:
+        dirname = os.path.dirname(path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+    except OSError:
+        pass
+
+
+def _nvd_fetch(cpe):
+    """Consulta la API NVD 2.0 por un CPE. Devuelve lista de CVEs o [] en fallo."""
+    params = {'cpeName': cpe, 'resultsPerPage': 100}
+    try:
+        resp = requests.get(NVD_API_URL, params=params, timeout=NVD_TIMEOUT)
+        if resp.status_code == 403:
+            time.sleep(NVD_RATE_LIMIT_WAIT)
+            resp = requests.get(NVD_API_URL, params=params, timeout=NVD_TIMEOUT)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        cves = []
+        for item in data.get('vulnerabilities', []):
+            cve = item.get('cve', {})
+            cve_id = cve.get('id', '')
+            if not cve_id:
+                continue
+            metrics = cve.get('metrics', {})
+            entry = (metrics.get('cvssMetricV31')
+                     or metrics.get('cvssMetricV30')
+                     or metrics.get('cvssMetricV2') or [{}])[0]
+            cvss_data = entry.get('cvssData', {})
+            score = cvss_data.get('baseScore')
+            severity = (entry.get('baseSeverity')
+                        or cvss_data.get('baseSeverity') or 'DESCONOCIDA').upper()
+            summary = ''
+            for desc in cve.get('descriptions', []):
+                if desc.get('lang') == 'en':
+                    summary = desc.get('value', '')
+                    break
+            cves.append({
+                'id': cve_id,
+                'severity': severity,
+                'score': score,
+                'summary': summary,
+                'published': cve.get('published', ''),
+                'url': f'https://nvd.nist.gov/vuln/detail/{cve_id}',
+            })
+        return cves
+    except requests.exceptions.RequestException:
+        return []
+    except ValueError:
+        return []
+
+
+def lookup_cves(tech_list, cache_path, last_request_time):
+    """Orquesta la consulta NVD por tecnología con caché y throttling.
+
+    Devuelve (resultado, nuevo_last_request_time). resultado: dict
+    { 'tecnologia': { 'cpe', 'source': 'nvd'|'cache', 'cves': [...] } }.
+    Ante fallo de red sin caché, cves queda vacío (nunca se fabrican datos).
+    """
+    global _last_nvd_request_time
+    result = {}
+    cache = load_nvd_cache(cache_path)
+    entries = cache.setdefault('entries', {})
+
+    for tech in tech_list:
+        name = tech.get('name', '')
+        vendor = tech.get('vendor', '')
+        product = tech.get('product', '')
+        version = tech.get('version')
+        if not version:
+            result[name] = {'cpe': None, 'source': None, 'cves': []}
+            continue
+
+        key = f'{vendor}:{product}:{version}'
+        cpe = build_cpe(vendor, product, version)
+
+        if key in entries:
+            result[name] = {'cpe': cpe, 'source': 'cache', 'cves': entries[key].get('cves', [])}
+            continue
+
+        # Throttle >= 6s desde la última petición NVD
+        now = time.time()
+        wait = NVD_REQUEST_INTERVAL - (now - last_request_time)
+        if wait > 0:
+            time.sleep(wait)
+
+        cves = _nvd_fetch(cpe)
+        last_request_time = time.time()
+        _last_nvd_request_time = last_request_time
+
+        if cves:
+            entries[key] = {
+                'source': 'nvd',
+                'fetched_at': datetime.now().isoformat(),
+                'cves': cves,
+            }
+            save_nvd_cache(cache_path, cache)
+            result[name] = {'cpe': cpe, 'source': 'nvd', 'cves': cves}
+        else:
+            result[name] = {'cpe': cpe, 'source': None, 'cves': []}
+
+    return result, last_request_time
+
 
 class VisualWebAnalyzer:
     """Analizador web con interfaz visual interactiva"""
@@ -59,11 +283,16 @@ class VisualWebAnalyzer:
         self.response = None
         self.headers = {}
         self.classified_headers = {}
+        self.html = None
         self.security_checks = {}
         self.url_info = {}
         self.status_code = None
         self.response_time = 0
         self.final_url = None
+        # Configuración NVD
+        self.cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), NVD_CACHE_DIR, NVD_CACHE_FILE)
+        self.cve_lookup = {}
+        self.last_nvd_request = 0.0
         
     def run(self):
         """Ejecuta el programa interactivo"""
@@ -205,7 +434,7 @@ class VisualWebAnalyzer:
         try:
             self.start_time = time.time()
             response = self.session.get(
-                self.url, 
+                self.url or '', 
                 timeout=10, 
                 allow_redirects=True,
                 headers={'User-Agent': 'WebSecurityAnalyzer/2.0'}
@@ -213,9 +442,10 @@ class VisualWebAnalyzer:
             self.response_time = time.time() - self.start_time
             self.status_code = response.status_code
             self.final_url = response.url
+            self.html = response.text
             return response
         except Exception as e:
-            console.print(f"[red]❌ Error: {str(e)}[/red]")
+            console.print(f"[red]❌ Error: {e!s}[/red]")
             return None
     
     def analyze_headers(self, response):
@@ -248,7 +478,7 @@ class VisualWebAnalyzer:
     def analyze_security(self, response):
         """Análisis de seguridad básico"""
         self.security_checks = {
-            'HTTPS': self.url.startswith('https'),
+            'HTTPS': (self.url or '').startswith('https'),
             'HSTS': 'strict-transport-security' in response.headers,
             'X-Frame-Options': 'x-frame-options' in response.headers,
             'X-Content-Type-Options': 'x-content-type-options' in response.headers,
@@ -313,14 +543,14 @@ class VisualWebAnalyzer:
                 if cookie.name in ['frontend_lang', 'visitor_uuid', 'session_id']:
                     continue
                     
-                if not cookie.secure and self.url.startswith('https'):
+                if not cookie.secure and (self.url or '').startswith('https'):
                     self.vulnerabilities.append({
                         'type': f'Cookie {cookie.name} sin Secure',
                         'severity': 'Media',
                         'description': f'Cookie {cookie.name} no tiene flag Secure',
                         'remediation': 'Agregar flag Secure a la cookie'
                     })
-                if not cookie.has_nonstandard_attr('httponly'):
+                if not cookie_has_attr(cookie, 'httponly', self.response):
                     self.vulnerabilities.append({
                         'type': f'Cookie {cookie.name} sin HttpOnly',
                         'severity': 'Media',
@@ -341,7 +571,7 @@ class VisualWebAnalyzer:
         info_table.add_row("🌐 URL", self.url)
         info_table.add_row("📊 Estado", f"{self.status_code} ({self.response.reason if self.response else 'N/A'})")
         info_table.add_row("⏱️  Tiempo", f"{self.response_time:.3f}s" if hasattr(self, 'response_time') else "N/A")
-        info_table.add_row("🔒 HTTPS", "✅" if self.url.startswith('https') else "❌")
+        info_table.add_row("🔒 HTTPS", "✅" if (self.url or '').startswith('https') else "❌")
         info_table.add_row("📦 Tamaño", f"{len(self.response.content) if self.response else 0} bytes")
         info_table.add_row("🔄 Redirecciones", str(len(self.response.history) if self.response else 0))
         
@@ -552,52 +782,74 @@ class VisualWebAnalyzer:
         input("\n[dim]Presiona Enter para continuar...[/dim]")
     
     def show_cves_detail(self):
-        """Muestra CVEs detectados"""
+        """Muestra CVEs reales detectados vía NVD API"""
         console.clear()
         self.show_banner()
         
         console.print(Panel("[bold magenta]📌 CVES DETECTADOS[/bold magenta]", border_style="magenta"))
         
-        technologies = []
-        if 'server' in self.headers:
-            technologies.append(f"Servidor: {self.headers['server']}")
-        if self.response and 'x-powered-by' in self.response.headers:
-            technologies.append(f"Framework: {self.response.headers['x-powered-by']}")
+        technologies = detect_technologies(self.response, self.html)
         
-        if technologies:
-            tech_table = Table(title="Tecnologías Detectadas", box=box.ROUNDED)
-            tech_table.add_column("Tecnología", style="cyan")
-            tech_table.add_column("Versión", style="white")
-            
-            for tech in technologies:
-                tech_table.add_row(tech, "No especificada")
-            
-            console.print(tech_table)
-            console.print()
-            
-            console.print("[bold yellow]CVEs potenciales (simulación):[/bold yellow]")
-            cve_table = Table(box=box.ROUNDED)
-            cve_table.add_column("CVE", style="bold red")
-            cve_table.add_column("Tecnología", style="cyan")
-            cve_table.add_column("Descripción", style="white")
-            cve_table.add_column("Severidad", style="bold")
-            
-            sample_cves = [
-                ("CVE-2021-23017", "nginx", "Buffer Overflow", "Alta"),
-                ("CVE-2021-39275", "Apache", "Denial of Service", "Media"),
-                ("CVE-2021-29447", "WordPress", "XSS", "Media")
-            ]
-            
-            for cve_id, tech, desc, severity in sample_cves:
-                color = "red" if severity == "Alta" else "yellow"
-                cve_table.add_row(cve_id, tech, desc, f"[{color}]{severity}[/{color}]")
-            
-            console.print(cve_table)
-            console.print()
-            
-            console.print("[italic dim]Nota: Los CVEs mostrados son simulados. En producción usar NVD API.[/italic dim]")
-        else:
+        if not technologies:
             console.print("[yellow]No se detectaron tecnologías específicas para buscar CVEs[/yellow]")
+            input("\n[dim]Presiona Enter para continuar...[/dim]")
+            return
+        
+        tech_table = Table(title="Tecnologías Detectadas", box=box.ROUNDED)
+        tech_table.add_column("Tecnología", style="cyan")
+        tech_table.add_column("Versión", style="white")
+        
+        for tech in technologies:
+            tech_table.add_row(tech['name'], tech.get('version') or "No especificada")
+        
+        console.print(tech_table)
+        console.print()
+        
+        result, self.last_nvd_request = lookup_cves(
+            technologies, self.cache_path, self.last_nvd_request
+        )
+        self.cve_lookup = result
+        
+        console.print("[bold yellow]CVEs (datos reales de NVD):[/bold yellow]")
+        cve_table = Table(box=box.ROUNDED)
+        cve_table.add_column("CVE", style="bold red")
+        cve_table.add_column("Tecnología", style="cyan")
+        cve_table.add_column("Score", style="bold")
+        cve_table.add_column("Severidad", style="bold")
+        cve_table.add_column("Descripción", style="white")
+        cve_table.add_column("Fuente", style="dim")
+        
+        found_any = False
+        for tech in technologies:
+            entry = result.get(tech['name'])
+            if not entry or not entry.get('cves'):
+                continue
+            found_any = True
+            source = entry.get('source') or 'nvd'
+            source_label = "caché" if source == 'cache' else "NVD"
+            for cve in entry['cves']:
+                severity = cve.get('severity') or 'DESCONOCIDA'
+                sev_lower = severity.lower()
+                color = "red" if sev_lower in ('critical', 'high', 'alta', 'alta') else ("yellow" if sev_lower in ('medium', 'media') else "green")
+                score = cve.get('score')
+                score_str = f"{score:.1f}" if isinstance(score, (int, float)) else "N/A"
+                summary = (cve.get('summary') or '')[:90]
+                cve_table.add_row(
+                    cve.get('id', '-'), tech['name'], score_str,
+                    f"[{color}]{severity}[/{color}]", summary, source_label
+                )
+        
+        if not found_any:
+            console.print("[green]No se encontraron CVEs para las tecnologías detectadas.[/green]")
+            console.print()
+            for tech in technologies:
+                entry = result.get(tech['name'])
+                if entry and entry.get('cpe'):
+                    console.print(f"  [dim]{tech['name']}: {entry['cpe']} — sin CVEs publicados[/dim]")
+                elif entry:
+                    console.print(f"  [dim]{tech['name']}: versión no detectable, no se consultó NVD[/dim]")
+        else:
+            console.print(cve_table)
         
         input("\n[dim]Presiona Enter para continuar...[/dim]")
     
@@ -623,10 +875,10 @@ class VisualWebAnalyzer:
         
         for cookie in self.response.cookies:
             secure = "✅" if cookie.secure else "❌"
-            httponly = "✅" if cookie.has_nonstandard_attr('httponly') else "❌"
+            httponly = "✅" if cookie_has_attr(cookie, 'httponly', self.response) else "❌"
             cookie_table.add_row(
                 cookie.name,
-                cookie.value[:30] + ("..." if len(cookie.value) > 30 else ""),
+                (cookie.value or '')[:30] + ("..." if len(cookie.value or '') > 30 else ""),
                 secure,
                 httponly,
                 cookie.domain or "-",
@@ -636,7 +888,7 @@ class VisualWebAnalyzer:
         console.print(cookie_table)
         
         secure_count = sum(1 for c in self.response.cookies if c.secure)
-        httponly_count = sum(1 for c in self.response.cookies if c.has_nonstandard_attr('httponly'))
+        httponly_count = sum(1 for c in self.response.cookies if cookie_has_attr(c, 'httponly', self.response))
         total = len(self.response.cookies)
         
         if total > 0:
@@ -709,33 +961,69 @@ class VisualWebAnalyzer:
         
         input("\n[dim]Presiona Enter para continuar...[/dim]")
     
-    def generate_report(self):
-        """Genera un reporte completo"""
-        console.clear()
-        self.show_banner()
+    def generate_report(self, interactive=True):
+        """Genera un reporte completo. Con interactive=False omite el modo visual (CLI no interactivo)."""
+        if interactive:
+            console.clear()
+            self.show_banner()
         
         console.print(Panel("[bold green]📊 GENERANDO REPORTE[/bold green]", border_style="green"))
         
         if not self.url:
             console.print("[red]❌ No hay análisis realizado. Analiza una URL primero.[/red]")
-            input("\n[dim]Presiona Enter para continuar...[/dim]")
+            if interactive:
+                input("\n[dim]Presiona Enter para continuar...[/dim]")
             return
+        
+        # Cookies: nombre, flags (Secure/HttpOnly/SameSite)
+        cookies = []
+        if self.response and self.response.cookies:
+            for c in self.response.cookies:
+                cookies.append({
+                    'name': c.name,
+                    'value': c.value,
+                    'secure': c.secure,
+                    'httponly': cookie_has_attr(c, 'httponly', self.response),
+                    'samesite': cookie_has_attr(c, 'samesite', self.response),
+                    'domain': c.domain,
+                    'path': c.path,
+                })
+        
+        # CVEs: agregar los resultados reales de NVD
+        cves = []
+        for tech, entry in (self.cve_lookup or {}).items():
+            for cve in entry.get('cves', []):
+                cves.append({
+                    'id': cve.get('id'),
+                    'technology': tech,
+                    'severity': cve.get('severity'),
+                    'score': cve.get('score'),
+                    'summary': cve.get('summary'),
+                    'url': cve.get('url'),
+                })
         
         report = {
             'url': self.url,
             'timestamp': datetime.now().isoformat(),
             'status': self.status_code if hasattr(self, 'status_code') else None,
+            'final_url': self.final_url if hasattr(self, 'final_url') else None,
+            'redirects': len(self.response.history) if (hasattr(self, 'response') and self.response and hasattr(self.response, 'history')) else 0,
             'headers': self.headers if hasattr(self, 'headers') else {},
             'security_checks': self.security_checks if hasattr(self, 'security_checks') else {},
             'vulnerabilities': self.vulnerabilities,
+            'cookies': cookies,
+            'cves': cves,
             'score': f"{self.security_score}/{self.max_score}" if hasattr(self, 'security_score') else "N/A"
         }
         
         filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, 'w') as f:
-            json.dump(report, f, indent=2)
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
         
         console.print(f"[bold green]✅ Reporte guardado como: {filename}[/bold green]")
+        
+        if not interactive:
+            return
         
         console.print(Panel(
             f"""
@@ -743,6 +1031,8 @@ class VisualWebAnalyzer:
 [bold]Estado:[/bold] {report['status']}
 [bold]Fecha:[/bold] {report['timestamp']}
 [bold]Vulnerabilidades:[/bold] {len(report['vulnerabilities'])}
+[bold]Cookies:[/bold] {len(report['cookies'])}
+[bold]CVEs:[/bold] {len(report['cves'])}
 [bold]Puntuación:[/bold] {report['score']}
             """,
             title="[bold]RESUMEN DEL REPORTE[/bold]",
@@ -753,16 +1043,65 @@ class VisualWebAnalyzer:
 
 
 def main():
-    """Función principal"""
+    """Función principal: modo interactivo o análisis por CLI con --url"""
+    parser = argparse.ArgumentParser(
+        description='Web Security Analyzer Pro: análisis de cabeceras, vulnerabilidades y CVEs (NVD)'
+    )
+    parser.add_argument(
+        '-u', '--url', metavar='URL',
+        help='URL a analizar en modo no interactivo (genera reporte JSON y termina)'
+    )
+    args = parser.parse_args()
+
+    analyzer = VisualWebAnalyzer()
+
     try:
-        analyzer = VisualWebAnalyzer()
-        analyzer.run()
+        if args.url:
+            # ---- Modo no interactivo (CLI) ----
+            analyzer.url = args.url.strip()
+            if not analyzer.url.startswith(('http://', 'https://')):
+                analyzer.url = 'https://' + analyzer.url
+
+            console.print(f"[cyan]Analizando: {analyzer.url}[/cyan]")
+
+            analyzer.analyze_url()
+            analyzer.response = analyzer.make_request()
+
+            if not analyzer.response:
+                console.print("[red]❌ No se pudo obtener respuesta del servidor.[/red]")
+                sys.exit(1)
+
+            analyzer.analyze_headers(analyzer.response)
+            analyzer.analyze_security(analyzer.response)
+            analyzer.analyze_vulnerabilities()
+
+            # Consultar CVEs reales de NVD
+            techs = detect_technologies(analyzer.response, analyzer.html)
+            if techs:
+                result, analyzer.last_nvd_request = lookup_cves(
+                    techs, analyzer.cache_path, analyzer.last_nvd_request
+                )
+                analyzer.cve_lookup = result
+
+            analyzer.generate_report(interactive=False)
+
+            console.print(f"[bold green]URL:[/bold green] {analyzer.url}")
+            console.print(f"[bold green]Estado:[/bold green] {analyzer.status_code}")
+            console.print(f"[bold green]Vulnerabilidades:[/bold green] {len(analyzer.vulnerabilities)}")
+            console.print(f"[bold green]CVEs encontrados:[/bold green] "
+                          f"{sum(len(e.get('cves', [])) for e in (analyzer.cve_lookup or {}).values())}")
+            console.print(f"[bold green]Puntuación:[/bold green] {analyzer.security_score}/{analyzer.max_score}")
+            sys.exit(0)
+        else:
+            # ---- Modo interactivo ----
+            analyzer.run()
     except KeyboardInterrupt:
         console.print("\n\n[yellow]⚠️  Programa interrumpido por el usuario[/yellow]")
     except Exception as e:
-        console.print(f"[red]❌ Error: {str(e)}[/red]")
+        console.print(f"[red]❌ Error: {e!s}[/red]")
         import traceback
         console.print(traceback.format_exc())
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

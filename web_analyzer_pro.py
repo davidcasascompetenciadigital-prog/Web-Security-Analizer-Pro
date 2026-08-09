@@ -29,17 +29,9 @@ try:
     from rich.table import Table
     RICH_AVAILABLE = True
 except ImportError:
-    RICH_AVAILABLE = False
-    print("⚠️  Rich no está instalado. Instalando...")
-    import subprocess
-    subprocess.check_call(['pip', 'install', 'rich'])
-    from rich import box
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
-    from rich.prompt import Confirm, Prompt
-    from rich.table import Table
-    RICH_AVAILABLE = True
+    print("Error: 'rich' is required for the interactive UI.")
+    print("Install it with: pip install rich")
+    sys.exit(1)
 
 console = Console()
 
@@ -61,9 +53,6 @@ CPE_MAP = {
 }
 
 VERSION_REGEX = re.compile(r'\d+(?:\.\d+){1,3}')
-
-# Última hora de petición a NVD (throttling >= 6s entre requests)
-_last_nvd_request_time = 0.0
 
 
 def cookie_has_attr(cookie, attr_name, response):
@@ -171,49 +160,62 @@ def save_nvd_cache(path, data):
         pass
 
 
-def _nvd_fetch(cpe):
-    """Consulta la API NVD 2.0 por un CPE. Devuelve lista de CVEs o [] en fallo."""
+def _nvd_fetch(cpe, last_request_time):
+    """Consulta la API NVD 2.0 por un CPE con paginación. Devuelve (cves, nuevo_last_request_time)."""
     params = {'cpeName': cpe, 'resultsPerPage': 100}
+    cves = []
     try:
-        resp = requests.get(NVD_API_URL, params=params, timeout=NVD_TIMEOUT)
-        if resp.status_code == 403:
-            time.sleep(NVD_RATE_LIMIT_WAIT)
+        for page in range(5):
+            now = time.time()
+            wait = NVD_REQUEST_INTERVAL - (now - last_request_time)
+            if wait > 0:
+                time.sleep(wait)
+
             resp = requests.get(NVD_API_URL, params=params, timeout=NVD_TIMEOUT)
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-        cves = []
-        for item in data.get('vulnerabilities', []):
-            cve = item.get('cve', {})
-            cve_id = cve.get('id', '')
-            if not cve_id:
-                continue
-            metrics = cve.get('metrics', {})
-            entry = (metrics.get('cvssMetricV31')
-                     or metrics.get('cvssMetricV30')
-                     or metrics.get('cvssMetricV2') or [{}])[0]
-            cvss_data = entry.get('cvssData', {})
-            score = cvss_data.get('baseScore')
-            severity = (entry.get('baseSeverity')
-                        or cvss_data.get('baseSeverity') or 'DESCONOCIDA').upper()
-            summary = ''
-            for desc in cve.get('descriptions', []):
-                if desc.get('lang') == 'en':
-                    summary = desc.get('value', '')
-                    break
-            cves.append({
-                'id': cve_id,
-                'severity': severity,
-                'score': score,
-                'summary': summary,
-                'published': cve.get('published', ''),
-                'url': f'https://nvd.nist.gov/vuln/detail/{cve_id}',
-            })
-        return cves
+            last_request_time = time.time()
+            if resp.status_code == 403:
+                time.sleep(NVD_RATE_LIMIT_WAIT)
+                resp = requests.get(NVD_API_URL, params=params, timeout=NVD_TIMEOUT)
+                last_request_time = time.time()
+            if resp.status_code != 200:
+                return cves, last_request_time
+            data = resp.json()
+            total_results = data.get('totalResults', 0)
+            vulnerabilities = data.get('vulnerabilities', [])
+            for item in vulnerabilities:
+                cve = item.get('cve', {})
+                cve_id = cve.get('id', '')
+                if not cve_id:
+                    continue
+                metrics = cve.get('metrics', {})
+                entry = (metrics.get('cvssMetricV31')
+                         or metrics.get('cvssMetricV30')
+                         or metrics.get('cvssMetricV2') or [{}])[0]
+                cvss_data = entry.get('cvssData', {})
+                score = cvss_data.get('baseScore')
+                severity = (entry.get('baseSeverity')
+                            or cvss_data.get('baseSeverity') or 'DESCONOCIDA').upper()
+                summary = ''
+                for desc in cve.get('descriptions', []):
+                    if desc.get('lang') == 'en':
+                        summary = desc.get('value', '')
+                        break
+                cves.append({
+                    'id': cve_id,
+                    'severity': severity,
+                    'score': score,
+                    'summary': summary,
+                    'published': cve.get('published', ''),
+                    'url': f'https://nvd.nist.gov/vuln/detail/{cve_id}',
+                })
+            if len(cves) >= total_results or len(vulnerabilities) == 0:
+                break
+            params['startIndex'] = (params.get('startIndex', 0) + 100)
+        return cves, last_request_time
     except requests.exceptions.RequestException:
-        return []
+        return cves, last_request_time
     except ValueError:
-        return []
+        return cves, last_request_time
 
 
 def lookup_cves(tech_list, cache_path, last_request_time):
@@ -223,7 +225,6 @@ def lookup_cves(tech_list, cache_path, last_request_time):
     { 'tecnologia': { 'cpe', 'source': 'nvd'|'cache', 'cves': [...] } }.
     Ante fallo de red sin caché, cves queda vacío (nunca se fabrican datos).
     """
-    global _last_nvd_request_time
     result = {}
     cache = load_nvd_cache(cache_path)
     entries = cache.setdefault('entries', {})
@@ -244,15 +245,7 @@ def lookup_cves(tech_list, cache_path, last_request_time):
             result[name] = {'cpe': cpe, 'source': 'cache', 'cves': entries[key].get('cves', [])}
             continue
 
-        # Throttle >= 6s desde la última petición NVD
-        now = time.time()
-        wait = NVD_REQUEST_INTERVAL - (now - last_request_time)
-        if wait > 0:
-            time.sleep(wait)
-
-        cves = _nvd_fetch(cpe)
-        last_request_time = time.time()
-        _last_nvd_request_time = last_request_time
+        cves, last_request_time = _nvd_fetch(cpe, last_request_time)
 
         if cves:
             entries[key] = {

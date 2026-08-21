@@ -2,6 +2,8 @@
 """
 Módulo de análisis de CVEs offline usando feeds de FKIE-CAD
 Versión con soporte completo para el formato FKIE-CAD
+Desde el menú, descarga la base de datos actualizada a
+un directorio local cve_cache para uso posterior.
 
 Autor: David Casas M. - Competencia Digital
 Licencia: CC BY-NC 4.0

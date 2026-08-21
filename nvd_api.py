@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Módulo de consulta a la API de NVD (National Vulnerability Database)
-Versión sin API key - Respeta el rate limit de 5 peticiones/30 segundos
+Con soporte para API Key configurable
 
 Autor: David Casas M. - Competencia Digital
 Licencia: CC BY-NC 4.0
@@ -10,6 +10,7 @@ Licencia: CC BY-NC 4.0
 import requests
 import time
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlencode
@@ -18,23 +19,56 @@ import re
 class NVDAPI:
     """
     Cliente para la API de NVD (National Vulnerability Database)
-    Sin API key - Rate limit: 5 peticiones cada 30 segundos
+    
+    Sin API key: Rate limit 5 peticiones/30 segundos
+    Con API key: Rate limit 50 peticiones/30 segundos
     
     Documentación: https://nvd.nist.gov/developers/vulnerabilities
     """
     
     BASE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     
-    def __init__(self):
+    def __init__(self, api_key: str = None):
         """
-        Inicializa el cliente de NVD API sin API key
+        Inicializa el cliente de NVD API
+        
+        Args:
+            api_key: API Key de NVD (opcional). Si no se proporciona,
+                    se busca en la variable de entorno NVD_API_KEY
         """
-        self.last_request = 0
-        self.rate_limit = 6.0  # 6 segundos entre peticiones (5 peticiones/30s)
+        # Si no se proporciona API key, buscar en variables de entorno
+        if not api_key:
+            api_key = os.environ.get('NVD_API_KEY', None)
+        
+        self.api_key = api_key
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'WebSecurityAnalyzer/3.0'
-        })
+        
+        if api_key:
+            self.session.headers.update({'apiKey': api_key})
+            self.rate_limit = 0.6  # 0.6 segundos (50 peticiones/30s)
+            self.has_api_key = True
+            print("   ✅ API Key de NVD configurada (rate limit: 50 peticiones/30s)")
+        else:
+            self.rate_limit = 6.0  # 6 segundos (5 peticiones/30s)
+            self.has_api_key = False
+            print("   ℹ️  Sin API Key (rate limit: 5 peticiones/30s)")
+            print("   💡 Registra una API key gratis en: https://nvd.nist.gov/developers/request-an-api-key")
+        
+        self.last_request = 0
+    
+    def set_api_key(self, api_key: str):
+        """Permite configurar la API key después de la inicialización"""
+        self.api_key = api_key
+        if api_key:
+            self.session.headers.update({'apiKey': api_key})
+            self.rate_limit = 0.6
+            self.has_api_key = True
+            print("   ✅ API Key de NVD actualizada (rate limit: 50 peticiones/30s)")
+        else:
+            self.session.headers.pop('apiKey', None)
+            self.rate_limit = 6.0
+            self.has_api_key = False
+            print("   ℹ️  API Key eliminada (rate limit: 5 peticiones/30s)")
     
     def _wait_for_rate_limit(self):
         """Espera el tiempo necesario para respetar el rate limit"""
@@ -77,24 +111,15 @@ class NVDAPI:
             'uwsgi': 'unbit'
         }
         
-        # Intentar obtener el vendor
         vendor = vendor_map.get(tech_lower, tech_lower)
         product = tech_lower
         
-        # Para Odoo, usar el vendor correcto
-        if tech_lower == 'odoo':
-            vendor = 'odoo'
-            product = 'odoo'
-        
         if version and version != 'unknown' and version != 'Unknown' and version != '':
-            # Intentar limpiar la versión (ej. "1.18.0" -> "1.18.0")
             version_clean = version.split()[0].strip()
-            # Eliminar caracteres no válidos
             version_clean = re.sub(r'[^0-9.]', '', version_clean)
             if version_clean and version_clean != '':
                 return f"cpe:2.3:*:{vendor}:{product}:{version_clean}:*:*:*:*:*:*:*"
         
-        # Si no hay versión, buscar cualquier versión
         return f"cpe:2.3:*:{vendor}:{product}:*:*:*:*:*:*:*"
     
     def search_cves(self, technology: str, version: str = None, 
@@ -111,15 +136,12 @@ class NVDAPI:
         Returns:
             Lista de CVEs encontrados
         """
-        # Mostrar la tecnología que se está buscando
         tech_display = f"{technology} {version if version else ''}".strip()
         print(f"\n   🔍 Buscando {tech_display} en NVD API...")
         
-        # Construir CPE para la búsqueda
         cpe_query = self._build_cpe_query(technology, version)
         print(f"      📌 CPE: {cpe_query}")
         
-        # Construir parámetros
         params = {
             'cpeName': cpe_query,
             'resultsPerPage': min(max_results, 2000),
@@ -127,7 +149,6 @@ class NVDAPI:
         }
         
         if days_back:
-            # Buscar solo CVEs de los últimos X días
             start_date = (datetime.now() - timedelta(days=days_back)).isoformat()
             params['pubStartDate'] = start_date
             
@@ -166,17 +187,14 @@ class NVDAPI:
                 
             elif response.status_code == 404:
                 print(f"      ⚠️  CPE no encontrado en NVD")
-                print(f"      💡 Intenta buscar con una versión más específica")
-                # Intentar buscar sin versión
                 if version:
                     print(f"      🔄 Reintentando sin versión...")
                     return self.search_cves(technology, None, max_results, days_back)
                 return []
                 
             elif response.status_code == 403:
-                print(f"      ⚠️  Límite de API alcanzado. Esperando 30 segundos...")
-                time.sleep(30)
-                # Reintentar una vez
+                print(f"      ⚠️  Límite de API alcanzado. Esperando 60 segundos...")
+                time.sleep(60)
                 return self.search_cves(technology, version, max_results, days_back)
             else:
                 print(f"      ❌ Error: {response.status_code}")
@@ -194,14 +212,12 @@ class NVDAPI:
         """Extrae información relevante de un CVE"""
         cve_id = cve_data.get('id', 'Unknown')
         
-        # Descripción en inglés
         description = ""
         for desc in cve_data.get('descriptions', []):
             if desc.get('lang') == 'en':
                 description = desc.get('value', '')
                 break
         
-        # Severidad
         severity = {'score': 'N/A', 'severity': 'UNKNOWN', 'vector': 'N/A'}
         metrics = cve_data.get('metrics', {})
         
@@ -243,17 +259,16 @@ class NVDAPI:
         print("🌐 CONSULTANDO NVD API")
         print("=" * 70)
         print(f"📋 Tecnologías a consultar: {total_tech}")
-        print(f"⏱️  Rate limit: 5 peticiones cada 30 segundos\n")
+        print(f"📊 Rate limit: {'50' if self.has_api_key else '5'} peticiones cada 30 segundos")
+        print("=" * 70 + "\n")
         
         for tech, version in technologies:
             current += 1
             print(f"\n   📌 [{current}/{total_tech}] {tech} {version}")
             print("   " + "-" * 50)
             
-            # Primero intentar con la versión específica
             cves = self.search_cves(tech, version, max_results=50, days_back=730)
             
-            # Si no se encontraron y hay versión, intentar sin versión
             if not cves and version and version != 'unknown':
                 print(f"      🔄 Reintentando sin versión específica...")
                 cves = self.search_cves(tech, None, max_results=50, days_back=730)
@@ -263,10 +278,8 @@ class NVDAPI:
                 'cves': cves
             }
             
-            # Mostrar resumen inmediato
             if len(cves) > 0:
                 print(f"\n   ✅ {tech} {version}: {len(cves)} CVEs encontrados")
-                # Mostrar los primeros 3
                 for i, cve in enumerate(cves[:3], 1):
                     sev = cve.get('severity', {}).get('severity', 'UNKNOWN')
                     score = cve.get('severity', {}).get('score', 'N/A')
@@ -277,10 +290,9 @@ class NVDAPI:
                 print(f"\n   ℹ️ {tech} {version}: 0 CVEs encontrados")
                 print(f"      💡 Sugerencia: Prueba con la base de datos FKIE-CAD (opción 5)")
             
-            # Esperar entre tecnologías para respetar rate limit
             if current < total_tech:
                 wait_time = self.rate_limit
-                print(f"\n   ⏳ Esperando {wait_time:.0f}s para respetar rate limit...")
+                print(f"\n   ⏳ Esperando {wait_time:.1f}s para respetar rate limit...")
                 time.sleep(wait_time)
         
         print("\n" + "=" * 70)

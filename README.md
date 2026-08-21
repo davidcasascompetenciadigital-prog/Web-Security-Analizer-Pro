@@ -1,4 +1,4 @@
-# 🔍 Web Security Analyzer Pro
+# 🔍 Web Security Analyzer Pro v3.0
 
 <div align="center">
   <img src="https://img.shields.io/badge/Python-3.8+-blue.svg" alt="Python">
@@ -14,14 +14,16 @@ El script Web Security Analyzer Pro realiza un análisis exhaustivo de seguridad
 
 ### 🎯 Características Principales
 
-- ✅ **Análisis completo de cabeceras HTTP**
-- 🔒 **Detección de vulnerabilidades de seguridad** (OWASP Top 10)
-- 🍪 **Análisis de cookies** con verificación de flags de seguridad
-- 🔐 **Evaluación SSL/TLS** y certificados
-- 📊 **Puntuación de seguridad** automática
-- 🖥️ **Interfaz visual interactiva** con colores y tablas
-- 📝 **Generación de reportes** en formato JSON
-- 🔍 **Detección de tecnologías** y CVEs potenciales
+- Análisis completo de cabeceras HTTP
+- Detección de vulnerabilidades (OWASP Top 10)
+- Análisis de cookies y seguridad
+- Puntuación de seguridad automática
+- Detección de tecnologías
+- Búsqueda de CVEs offline con FKIE-CAD
+- Base de datos con 381,325 CVEs
+- Paginación en resultados
+- Reportes en JSON
+- Interfaz visual interactiva con Rich
 
 ## 👤 Autor
 

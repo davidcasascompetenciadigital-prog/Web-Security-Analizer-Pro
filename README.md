@@ -1,4 +1,4 @@
-# 🔍 Web Security Analyzer Pro v3.0
+# 🔍 Web Security Analyzer Pro v3.0 FKIE-CAD con detección de CVEs
 
 <div align="center">
   <img src="https://img.shields.io/badge/Python-3.8+-blue.svg" alt="Python">

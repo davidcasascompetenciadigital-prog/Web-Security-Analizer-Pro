@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Módulo de análisis de CVEs offline usando feeds de FKIE-CAD
-Versión con streaming usando ijson - Bajo consumo de memoria
+Versión con soporte de rangos de versión (versionStartIncluding / versionEndExcluding)
 
 Autor: David Casas M. - Competencia Digital
 Licencia: CC BY-NC 4.0
@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import gc
+import re
 
 try:
     import ijson
@@ -29,7 +30,7 @@ except ImportError:
 
 
 class LocalCVEDatabase:
-    """Gestor de base de datos local de CVEs - Streaming con ijson"""
+    """Gestor de base de datos local de CVEs - Con soporte de rangos de versión"""
 
     BASE_URL = "https://github.com/fkie-cad/nvd-json-data-feeds/releases/latest/download/"
     ALL_CVES_FILE = "CVE-All.json.xz"
@@ -45,7 +46,6 @@ class LocalCVEDatabase:
         self.version = None
         self.total_cves = 0
         self.is_loaded = False
-        self.cves_list = []  # Lista de CVEs relevantes (solo para estadísticas)
 
         self._load_metadata()
 
@@ -154,9 +154,58 @@ class LocalCVEDatabase:
         print(f"   CVEs en base de datos: ~{self.total_cves}")
         return True
 
+    def _parse_version(self, version_str: str) -> Tuple[int, ...]:
+        """Convierte una versión a tupla para comparación"""
+        if not version_str or version_str == 'N/A' or version_str == '*':
+            return ()
+        try:
+            # Limpiar la versión
+            version_str = version_str.strip()
+            # Si tiene prefijo 'v', quitarlo
+            if version_str.startswith('v'):
+                version_str = version_str[1:]
+            # Separar por puntos y convertir a números
+            parts = []
+            for part in version_str.split('.'):
+                try:
+                    parts.append(int(part))
+                except ValueError:
+                    # Si no es número, intentar extraer números
+                    nums = re.findall(r'\d+', part)
+                    if nums:
+                        parts.append(int(nums[0]))
+                    else:
+                        parts.append(0)
+            return tuple(parts)
+        except:
+            return ()
+
+    def _version_in_range(self, version: str, start: str, end: str) -> bool:
+        """Verifica si una versión está dentro de un rango"""
+        if not version:
+            return True
+        
+        ver = self._parse_version(version)
+        if not ver:
+            return True
+        
+        # Verificar inicio
+        if start and start != 'N/A' and start != '*':
+            start_ver = self._parse_version(start)
+            if start_ver and ver < start_ver:
+                return False
+        
+        # Verificar fin
+        if end and end != 'N/A' and end != '*':
+            end_ver = self._parse_version(end)
+            if end_ver and ver >= end_ver:
+                return False
+        
+        return True
+
     def search_cves_by_technology(self, technology: str, version: str = None, max_results: int = 50) -> List[Dict]:
         """
-        Busca CVEs usando ijson streaming - Muy bajo consumo de memoria
+        Busca CVEs usando ijson - Con soporte de rangos de versión
         """
         if not self.cves_file.exists():
             print("⚠️  Base de datos no descargada")
@@ -164,79 +213,74 @@ class LocalCVEDatabase:
 
         results = []
         tech_lower = technology.lower()
-        version_lower = version.lower() if version else None
+        version_str = version if version else None
 
-        print(f"   🔍 Buscando {technology} {version} (streaming con ijson)...")
+        print(f"   🔍 Buscando {technology} {version if version else '(todas)'}...")
 
         try:
-            # Abrir el archivo comprimido
             with lzma.open(self.cves_file, 'rb') as f:
-                # Usar ijson para parsear el array de CVEs
-                # La clave en FKIE-CAD es 'cve_items'
-                parser = ijson.parse(f)
+                cves_iterator = ijson.items(f, 'cve_items.item')
                 
                 processed = 0
                 found = 0
-                current_cve = None
-                in_cve = False
                 
-                for prefix, event, value in parser:
-                    # Detectar cuando empezamos un nuevo CVE
-                    if prefix == 'cve_items.item' and event == 'start_map':
-                        in_cve = True
-                        current_cve = {}
-                        processed += 1
+                for cve_data in cves_iterator:
+                    processed += 1
                     
-                    # Si estamos dentro de un CVE, recolectar datos
-                    if in_cve and current_cve is not None:
-                        # Extraer ID
-                        if prefix.endswith('.id') and event == 'string':
-                            current_cve['id'] = value
-                        
-                        # Extraer configuraciones (CPEs)
-                        elif prefix.endswith('.criteria') and event == 'string':
-                            if 'cpes' not in current_cve:
-                                current_cve['cpes'] = []
-                            current_cve['cpes'].append(value)
-                        
-                        # Extraer descripciones
-                        elif 'descriptions' in prefix and event == 'string' and prefix.endswith('.value'):
-                            if 'descriptions' not in current_cve:
-                                current_cve['descriptions'] = []
-                            # Obtener el idioma
-                            lang_prefix = prefix.rsplit('.value', 1)[0] + '.lang'
-                            # El idioma se procesa antes, así que lo guardamos
-                            current_cve['descriptions'].append({'lang': 'en', 'value': value})
-                        
-                        # Extraer severidad
-                        elif 'baseSeverity' in prefix and event == 'string':
-                            if 'metrics' not in current_cve:
-                                current_cve['metrics'] = {}
-                            if 'cvssMetricV31' not in current_cve['metrics']:
-                                current_cve['metrics']['cvssMetricV31'] = []
-                            current_cve['metrics']['cvssMetricV31'].append({'baseSeverity': value})
-                        
-                        # Extraer score
-                        elif 'baseScore' in prefix and event == 'number':
-                            if 'metrics' in current_cve and 'cvssMetricV31' in current_cve['metrics']:
-                                if current_cve['metrics']['cvssMetricV31']:
-                                    current_cve['metrics']['cvssMetricV31'][-1]['baseScore'] = value
+                    # Buscar en configurations
+                    configs = cve_data.get('configurations', [])
+                    found_match = False
                     
-                    # Detectar cuando terminamos un CVE
-                    if prefix == 'cve_items.item' and event == 'end_map':
-                        if current_cve and self._cve_matches(current_cve, tech_lower, version_lower):
-                            cve_info = self._extract_cve_info(current_cve)
-                            results.append(cve_info)
-                            found += 1
-                            if found >= max_results:
+                    for config in configs:
+                        if found_match:
+                            break
+                        for node in config.get('nodes', []):
+                            if found_match:
                                 break
-                        
-                        in_cve = False
-                        current_cve = None
-                        
-                        # Mostrar progreso cada 100 CVEs
-                        if processed % 100 == 0:
-                            print(f"\r   Procesados: {processed} CVEs | Encontrados: {found}", end='')
+                            for cpe_match in node.get('cpeMatch', []):
+                                # FKIE-CAD usa 'criteria' en lugar de 'cpe23Uri'
+                                criteria = cpe_match.get('criteria', '').lower()
+                                
+                                if tech_lower in criteria:
+                                    # Si no hay versión específica, encontrado
+                                    if not version_str:
+                                        found_match = True
+                                        break
+                                    
+                                    # Verificar rangos de versión
+                                    version_start = cpe_match.get('versionStartIncluding', '')
+                                    version_end = cpe_match.get('versionEndExcluding', '')
+                                    
+                                    if self._version_in_range(version_str, version_start, version_end):
+                                        found_match = True
+                                        break
+                                    
+                                    # También verificar si la versión está en el CPE
+                                    parts = criteria.split(':')
+                                    if len(parts) > 4:
+                                        cpe_version = parts[4]
+                                        if version_str in cpe_version or cpe_version in version_str:
+                                            found_match = True
+                                            break
+                            if found_match:
+                                break
+                        if found_match:
+                            break
+                    
+                    if found_match:
+                        cve_info = self._extract_cve_info(cve_data)
+                        results.append(cve_info)
+                        found += 1
+                        if found >= max_results:
+                            break
+                    
+                    if processed % 1000 == 0:
+                        print(f"\r   Procesados: {processed} CVEs | Encontrados: {found}", end='')
+                    
+                    # Limitar a 50,000 CVEs
+                    if processed >= 50000:
+                        print(f"\r   ⚠️  Límite de 50,000 CVEs alcanzado", end='')
+                        break
 
             print(f"\r   ✅ Procesados: {processed} CVEs | Encontrados: {found}   ")
 
@@ -248,36 +292,6 @@ class LocalCVEDatabase:
             return []
 
         return results
-
-    def _cve_matches(self, cve_data: Dict, tech_lower: str, version_lower: str = None) -> bool:
-        """Verifica si un CVE coincide con la tecnología buscada"""
-        if not cve_data:
-            return False
-        
-        # Buscar en CPEs (criteria)
-        cpes = cve_data.get('cpes', [])
-        for cpe in cpes:
-            cpe_lower = cpe.lower()
-            if tech_lower in cpe_lower:
-                if version_lower:
-                    parts = cpe_lower.split(':')
-                    if len(parts) > 4:
-                        cpe_version = parts[4]
-                        if version_lower in cpe_version or cpe_version in version_lower:
-                            return True
-                else:
-                    return True
-        
-        # Buscar en descripciones
-        for desc in cve_data.get('descriptions', []):
-            desc_text = desc.get('value', '').lower()
-            if tech_lower in desc_text:
-                if version_lower and version_lower in desc_text:
-                    return True
-                elif not version_lower:
-                    return True
-        
-        return False
 
     def _extract_cve_info(self, cve_data: Dict) -> Dict:
         """Extrae información de un CVE"""
@@ -309,12 +323,22 @@ class LocalCVEDatabase:
         metrics = cve_data.get('metrics', {})
         if 'cvssMetricV31' in metrics:
             metric = metrics['cvssMetricV31'][0]
-            severity['severity'] = metric.get('baseSeverity', 'UNKNOWN')
-            severity['score'] = metric.get('baseScore', 'N/A')
+            if 'cvssData' in metric:
+                cvss = metric['cvssData']
+                severity['score'] = cvss.get('baseScore', 'N/A')
+                severity['severity'] = metric.get('baseSeverity', 'UNKNOWN')
+                severity['vector'] = cvss.get('vectorString', 'N/A')
         elif 'cvssMetricV30' in metrics:
             metric = metrics['cvssMetricV30'][0]
-            severity['severity'] = metric.get('baseSeverity', 'UNKNOWN')
+            if 'cvssData' in metric:
+                cvss = metric['cvssData']
+                severity['score'] = cvss.get('baseScore', 'N/A')
+                severity['severity'] = metric.get('baseSeverity', 'UNKNOWN')
+                severity['vector'] = cvss.get('vectorString', 'N/A')
+        elif 'cvssMetricV2' in metrics:
+            metric = metrics['cvssMetricV2'][0]
             severity['score'] = metric.get('baseScore', 'N/A')
+            severity['severity'] = metric.get('severity', 'UNKNOWN')
         
         return severity
 

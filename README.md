@@ -10,20 +10,25 @@
 
 **Web Security Analyzer Pro** es una herramienta avanzada de análisis de seguridad web que examina cabeceras HTTP, cookies, vulnerabilidades comunes y configuración SSL/TLS. Diseñado para administradores de sistemas, desarrolladores y profesionales de seguridad que necesitan auditar sus sitios web de forma rápida y eficiente.
 
-El script Web Security Analyzer Pro realiza un análisis exhaustivo de seguridad web sin consultas externas, basándose únicamente en la respuesta HTTP y el contenido de la página. Comprueba cabeceras HTTP (HSTS, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, CSP, Referrer-Policy), cookies (flags Secure, HttpOnly y SameSite), SSL/TLS (versión del protocolo y validez del certificado), vulnerabilidades comunes (Clickjacking, MIME sniffing, XSS, información del servidor expuesta), contenido HTML (metadatos, títulos, recursos como CSS, JS e imágenes), tecnologías detectadas y genera una puntuación de seguridad con recomendaciones de remediación. Los CVEs mostrados son simulados (datos hardcodeados) y el script no consulta bases de datos externas como NVD, VirusTotal o Shodan, aunque sería interesante integrarlas, no?.
+El script Web Security Analyzer Pro realiza un análisis exhaustivo de seguridad web sin consultas externas, basándose únicamente en la respuesta HTTP y el contenido de la página. Comprueba cabeceras HTTP (HSTS, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, CSP, Referrer-Policy), cookies (flags Secure, HttpOnly y SameSite), SSL/TLS (versión del protocolo y validez del certificado), vulnerabilidades comunes (Clickjacking, MIME sniffing, XSS, información del servidor expuesta), contenido HTML (metadatos, títulos, recursos como CSS, JS e imágenes), tecnologías detectadas y genera una puntuación de seguridad con recomendaciones de remediación.
+
+La bse de datos de CVEs se obtiene de FKIE-CAD (+380.000, prepara RAM suficiente). https://fkie-cad.github.io/
+
+Definición: "Vulnerabilidades y exposiciones comunes Common Vulnerabilities and Exposures (CVE)"
 
 ### 🎯 Características Principales
 
-- Análisis completo de cabeceras HTTP
-- Detección de vulnerabilidades (OWASP Top 10)
-- Análisis de cookies y seguridad
-- Puntuación de seguridad automática
-- Detección de tecnologías
-- Búsqueda de CVEs offline con FKIE-CAD
-- Base de datos con 381,325 CVEs
-- Paginación en resultados
-- Reportes en JSON
-- Interfaz visual interactiva con Rich
+- ✅ **Análisis completo de cabeceras HTTP** - Clasificación y significado detallado
+- 🔒 **Detección de vulnerabilidades de seguridad** (OWASP Top 10)
+- 🍪 **Análisis de cookies** con verificación de flags de seguridad (Secure, HttpOnly, SameSite)
+- 🔐 **Evaluación SSL/TLS** y certificados
+- 📊 **Puntuación de seguridad** automática
+- 🖥️ **Interfaz visual interactiva** con colores y tablas usando Rich
+- 📝 **Generación de reportes** en formato JSON
+- 🔍 **Detección de tecnologías** (nginx, Apache, PHP, WordPress, Odoo, Django, Node.js)
+- 📌 **Búsqueda de CVEs offline** con base de datos FKIE-CAD (381,325 CVEs)
+- 📄 **Paginación de resultados** para CVEs
+- 📚 **Origen de datos** FKIE-CAD (Fraunhofer FKIE Cyber Analysis & Defense)
 
 ## 👤 Autor
 
@@ -76,6 +81,7 @@ python web_analyzer_visual.py
 ```bash
 # Instalar dependencias globalmente
 pip install rich requests
+Alternativamente, puedes "pip install -r requeriments.txt"
 
 # Ejecutar
 python web_analyzer_visual.py
@@ -97,7 +103,7 @@ $ python web_analyzer_visual.py
 ║    ╚══╝╚══╝ ╚══════╝╚═════╝     ╚══════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝  ║
 ║                                                                              ║
 ║                    🔍 Análisis Web de Seguridad Pro                          ║
-║                   Interactive Security Scanner v2.0                         ║
+║                       v3.0 - Con análisis de CVEs                         ║
 ║                                                                              ║
 ║               Autor: David Casas M. - Competencia Digital                   ║
 ║               Licencia: CC BY-NC 4.0                                       ║
@@ -105,19 +111,20 @@ $ python web_analyzer_visual.py
 
 
 
-[bold cyan]Selecciona una opción[/bold cyan] [1/2/3/4/5/6/7] (1): 1
+[bold cyan]Selecciona una opción[/bold cyan] [1/2/3/4/5/6/7/8] (1): 1
 
 [bold]Ingresa la URL a analizar[/bold]: https://www.website.com
 
 El modo interactivo te guiará a través de un menú con las siguientes opciones:
 
-    Analizar nueva URL
-    Ver cabeceras HTTP
-    Análisis de seguridad
-    Vulnerabilidades encontradas
-    CVEs detectados
-    Generar reporte
-    Salir
+    1. Analizar nueva URL
+    2. Ver cabeceras HTTP
+    3. Análisis de seguridad
+    4. Vulnerabilidades encontradas
+    5. CVEs encontrador para tecnologías detectadas
+    6. Generar reporte
+    7. Gestionar base de datos de CVEs
+    8. Salir
 
 Reportes Generados
 
@@ -171,6 +178,35 @@ Puntuación de Seguridad
     50-69%: 🟠 Regular - Atención requerida
     0-49%: 🔴 Deficiente - Acción inmediata
 
+Tecnología	Versión	Ejemplo
+nginx	1.18.0, 1.20.0, etc.	Servidor web
+Apache	2.4.48, etc.	Servidor web
+PHP	7.4.33, 8.0.0, etc.	Lenguaje de programación
+WordPress	5.8.1, 6.0.0, etc.	CMS
+Odoo	14.0, 15.0, etc.	ERP
+Django	3.2, 4.0, etc.	Framework Python
+Node.js	14.x, 16.x, etc.	Entorno JavaScript
+
+
+ORIGEN DE LA BASE DE DATOS
+
+Fuente: FKIE-CAD (Fraunhofer FKIE Cyber Analysis & Defense)
+Repositorio: https://github.com/fkie-cad/nvd-json-data-feeds
+Descripción: Reconstrucción comunitaria de los feeds JSON de NVD
+Actualización: Diaria (00:00 UTC)
+Total CVEs: ~381,000+
+Formato: NVD JSON 2.0
+Licencia: Open Source
+Ventajas:
+   • No requiere autenticación API
+   • Sin límites de peticiones
+   • Búsqueda offline
+   • Actualizaciones automáticas
+
+Los datos se sincronizan con NVD (National Vulnerability Database)
+https://nvd.nist.gov/
+
+
 Contribuciones
 
 Las contribuciones son bienvenidas. Por favor:
@@ -201,13 +237,9 @@ Reporte de Errores
 Si encuentras algún error, por favor crea un issue en GitHub con:
 
     Descripción del problema
-
     Pasos para reproducirlo
-
     Versión de Python y sistema operativo
-
     Salida de error completa
-
     URL analizada (si es pública)
 
 Aviso Legal
@@ -219,17 +251,15 @@ IMPORTANTE: El análisis de seguridad de sitios web sin autorización explícita
 Agradecimientos
 
     A la comunidad de Python por las excelentes librerías
-
     A los contribuidores y colaboradores
-
     A los usuarios que reportan bugs y sugieren mejoras
-
     A la comunidad de Odoo por sus valiosas contribuciones a la seguridadUpdate
+    A FKIE-CAD por mantener la base de datos de CVEs
 
 Estado del Proyecto
 
 Métrica	Estado
-Versión	1.0.0
+Versión	3.0.0
 Estado	Estable
 Pruebas	✅ Pasadas
 Documentación	✅ Completa
@@ -241,6 +271,7 @@ Enlaces Útiles
     Security Headers
     SSL Labs
     HSTS Preload
-    Mozilla Observatory
+    NVD (National Vulnerability Database)
+    FKIE-CAD NVD Feeds
 
 

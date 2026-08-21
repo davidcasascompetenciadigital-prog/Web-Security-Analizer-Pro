@@ -84,7 +84,7 @@ class WebSecurityAnalyzer:
             self.show_main_menu()
             choice = Prompt.ask(
                 "\n[bold cyan]Selecciona una opción[/bold cyan]",
-                choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+                choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "x"],
                 default="1"
             )
 
@@ -101,12 +101,14 @@ class WebSecurityAnalyzer:
             elif choice == "6":
                 self.search_cves_nvd()
             elif choice == "7":
-                self.generate_report()
+                self.configure_nvd_api()
             elif choice == "8":
-                self.manage_cve_database()
+                self.generate_report()
             elif choice == "9":
-                self.show_cves_detail()
+                self.manage_cve_database()
             elif choice == "0":
+                self.show_cves_detail()
+            elif choice.lower() == "x":
                 if Confirm.ask("[yellow]¿Estás seguro de que quieres salir?[/yellow]"):
                     console.print("\n[bold green]¡Hasta luego! 👋[/bold green]")
                     break
@@ -146,10 +148,11 @@ class WebSecurityAnalyzer:
         menu.add_row("4", "⚠️  Vulnerabilidades encontradas")
         menu.add_row("5", "📂 Buscar CVEs (FKIE-CAD offline)")
         menu.add_row("6", "🌐 Buscar CVEs (NVD API online)")
-        menu.add_row("7", "📊 Generar reporte")
-        menu.add_row("8", "💾 Gestionar base de datos CVEs")
-        menu.add_row("9", "📌 Ver CVEs encontrados")
-        menu.add_row("0", "🚪 Salir")
+        menu.add_row("7", "🔑 Configurar API Key NVD")
+        menu.add_row("8", "📊 Generar reporte")
+        menu.add_row("9", "💾 Gestionar base de datos CVEs")
+        menu.add_row("0", "📌 Ver CVEs encontrados")
+        menu.add_row("x", "🚪 Salir")
 
         console.print(Panel(menu, title="[bold]MENÚ PRINCIPAL[/bold]", border_style="cyan"))
 
@@ -687,6 +690,51 @@ https://nvd.nist.gov/[/italic dim]
         else:
             console.print("\n[dim]Puedes verlos más tarde con la opción 9 del menú principal[/dim]")
             input("\n[dim]Presiona Enter para volver al menú principal...[/dim]")
+            
+    # función para agregar la API de NVD
+    def configure_nvd_api(self):
+        """Configura la API Key de NVD"""
+        console.clear()
+        self.show_banner()
+        
+        console.print(Panel("[bold cyan]🔑 CONFIGURACIÓN DE API KEY NVD[/bold cyan]", border_style="cyan"))
+        
+        # Mostrar estado actual
+        if self.nvd_api.has_api_key:
+            console.print(f"\n[green]✅ API Key configurada actualmente[/green]")
+            console.print(f"   Rate limit: [bold]50 peticiones/30 segundos[/bold]")
+        else:
+            console.print(f"\n[yellow]⚠️  Sin API Key configurada[/yellow]")
+            console.print(f"   Rate limit: [dim]5 peticiones/30 segundos[/dim]")
+            console.print(f"\n[bold]💡 ¿Cómo obtener una API Key?[/bold]")
+            console.print("   1. Visita: https://nvd.nist.gov/developers/request-an-api-key")
+            console.print("   2. Regístrate y solicita tu API key (gratis)")
+            console.print("   3. Cópiala y pégala aquí")
+        
+        console.print("\n[bold]Opciones:[/bold]")
+        console.print("  1. 🔑 Configurar API Key")
+        console.print("  2. 🗑️  Eliminar API Key (usar modo sin API)")
+        console.print("  3. ↩️  Volver al menú principal")
+        
+        choice = Prompt.ask("\n[bold cyan]Selecciona una opción[/bold cyan]", choices=["1", "2", "3"])
+        
+        if choice == "1":
+            api_key = Prompt.ask("\n[bold]Ingresa tu API Key de NVD[/bold]", password=True)
+            if api_key and len(api_key) > 10:
+                self.nvd_api.set_api_key(api_key)
+                console.print("[bold green]✅ API Key configurada correctamente[/bold green]")
+            else:
+                console.print("[red]❌ API Key inválida. Debe tener al menos 10 caracteres.[/red]")
+            input("\n[dim]Presiona Enter para continuar...[/dim]")
+            
+        elif choice == "2":
+            self.nvd_api.set_api_key(None)
+            console.print("[bold yellow]🗑️  API Key eliminada[/bold yellow]")
+            input("\n[dim]Presiona Enter para continuar...[/dim]")
+            
+        elif choice == "3":
+            return
+    
 
     # =====================================================
     # VISUALIZACIÓN DE RESULTADOS

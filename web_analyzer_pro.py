@@ -19,8 +19,9 @@ from typing import Dict, List, Optional, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
-# Importar módulo de CVEs
+# Importar módulos de CVEs
 from cve_analyzer import LocalCVEDatabase
+from nvd_api import NVDAPI
 
 # Librerías para interfaz visual
 try:
@@ -65,11 +66,15 @@ class WebSecurityAnalyzer:
         self.final_url = None
         self.technologies = []
 
-        # Inicializar base de datos de CVEs
+        # Inicializar base de datos de CVEs (FKIE-CAD)
         self.cve_db = LocalCVEDatabase(cache_dir="./cve_cache")
         self.cve_db_loaded = False
+        
+        # Inicializar NVD API (sin API key)
+        self.nvd_api = NVDAPI()
         self.cve_results = {}
         self.cves_searched = False
+        self.last_source = None  # 'FKIE-CAD' o 'NVD API'
 
     def run(self):
         """Ejecuta el programa interactivo"""
@@ -79,7 +84,7 @@ class WebSecurityAnalyzer:
             self.show_main_menu()
             choice = Prompt.ask(
                 "\n[bold cyan]Selecciona una opción[/bold cyan]",
-                choices=["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+                choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
                 default="1"
             )
 
@@ -92,14 +97,16 @@ class WebSecurityAnalyzer:
             elif choice == "4":
                 self.show_vulnerabilities_detail()
             elif choice == "5":
-                self.search_and_show_cves()
+                self.search_cves_fkie()
             elif choice == "6":
-                self.generate_report()
+                self.search_cves_nvd()
             elif choice == "7":
-                self.manage_cve_database()
+                self.generate_report()
             elif choice == "8":
-                self.show_cves_detail()
+                self.manage_cve_database()
             elif choice == "9":
+                self.show_cves_detail()
+            elif choice == "0":
                 if Confirm.ask("[yellow]¿Estás seguro de que quieres salir?[/yellow]"):
                     console.print("\n[bold green]¡Hasta luego! 👋[/bold green]")
                     break
@@ -137,11 +144,12 @@ class WebSecurityAnalyzer:
         menu.add_row("2", "📋 Ver cabeceras HTTP")
         menu.add_row("3", "🔒 Análisis de seguridad")
         menu.add_row("4", "⚠️  Vulnerabilidades encontradas")
-        menu.add_row("5", "🔎 Buscar CVEs para tecnologías detectadas")
-        menu.add_row("6", "📊 Generar reporte")
-        menu.add_row("7", "💾 Gestionar base de datos CVEs")
-        menu.add_row("8", "📌 Ver CVEs encontrados")
-        menu.add_row("9", "🚪 Salir")
+        menu.add_row("5", "📂 Buscar CVEs (FKIE-CAD offline)")
+        menu.add_row("6", "🌐 Buscar CVEs (NVD API online)")
+        menu.add_row("7", "📊 Generar reporte")
+        menu.add_row("8", "💾 Gestionar base de datos CVEs")
+        menu.add_row("9", "📌 Ver CVEs encontrados")
+        menu.add_row("0", "🚪 Salir")
 
         console.print(Panel(menu, title="[bold]MENÚ PRINCIPAL[/bold]", border_style="cyan"))
 
@@ -218,11 +226,9 @@ https://nvd.nist.gov/[/italic dim]
         # Opciones
         console.print("\n[bold]Opciones:[/bold]")
         console.print("  1. 📥 Descargar/Actualizar base de datos")
-        console.print("  2. 🔍 Buscar CVEs para tecnologías detectadas")
-        console.print("  3. 📊 Ver estadísticas detalladas")
-        console.print("  4. ↩️  Volver al menú principal")
+        console.print("  2. ↩️  Volver al menú principal")
 
-        choice = Prompt.ask("\n[bold cyan]Selecciona una opción[/bold cyan]", choices=["1", "2", "3", "4"])
+        choice = Prompt.ask("\n[bold cyan]Selecciona una opción[/bold cyan]", choices=["1", "2"])
 
         if choice == "1":
             if self.cve_db.download_cves(force=True):
@@ -233,64 +239,7 @@ https://nvd.nist.gov/[/italic dim]
             input("\n[dim]Presiona Enter para continuar...[/dim]")
 
         elif choice == "2":
-            if not self.cve_db_loaded:
-                self.cve_db.load_cves()
-                self.cve_db_loaded = True
-            self.search_and_show_cves()
-
-        elif choice == "3":
-            self.show_cve_statistics()
-
-        elif choice == "4":
             return
-
-    def show_cve_statistics(self):
-        """Muestra estadísticas detalladas de la base de datos CVEs"""
-        console.clear()
-        self.show_banner()
-
-        console.print(Panel("[bold green]📊 ESTADÍSTICAS DE BASE DE DATOS CVEs[/bold green]", border_style="green"))
-
-        stats = self.cve_db.get_statistics()
-
-        if stats.get('status') == 'No cargada' or stats.get('total_cves', 0) == 0:
-            console.print("[yellow]⚠️  Base de datos no cargada o no disponible[/yellow]")
-            input("\n[dim]Presiona Enter para continuar...[/dim]")
-            return
-
-        stats_table = Table(box=box.ROUNDED)
-        stats_table.add_column("Métrica", style="bold cyan")
-        stats_table.add_column("Valor", style="white")
-
-        stats_table.add_row("📊 Total CVEs", str(stats['total_cves']))
-        stats_table.add_row("📅 Última actualización", stats.get('last_update', 'N/A'))
-        stats_table.add_row("📌 Versión", stats.get('version', 'N/A'))
-
-        if 'severity_count' in stats and stats['total_cves'] > 0:
-            for severity, count in stats['severity_count'].items():
-                if count > 0:
-                    color = "red" if severity == "CRITICAL" else "yellow" if severity == "HIGH" else "blue" if severity == "MEDIUM" else "green"
-                    percent = (count / stats['total_cves']) * 100
-                    stats_table.add_row(
-                        f"  {severity}",
-                        f"[{color}]{count} ({percent:.1f}%)[/{color}]"
-                    )
-
-        console.print(Panel(stats_table, title="[bold]📊 ESTADÍSTICAS[/bold]", border_style="cyan"))
-
-        if self.cve_db.cves_file.exists():
-            size_mb = self.cve_db.cves_file.stat().st_size / (1024 * 1024)
-            console.print(Panel(
-                f"""
-[bold]Información de archivo:[/bold]
-📁 Ruta: {self.cve_db.cves_file}
-📦 Tamaño: {size_mb:.1f} MB
-                """,
-                title="[bold]📁 ARCHIVO LOCAL[/bold]",
-                border_style="dim"
-            ))
-
-        input("\n[dim]Presiona Enter para continuar...[/dim]")
 
     # =====================================================
     # ANÁLISIS PRINCIPAL
@@ -339,7 +288,6 @@ https://nvd.nist.gov/[/italic dim]
                 progress.update(task, advance=65)
                 time.sleep(0.5)
 
-                # Detección de tecnologías con pausas internas
                 self.detect_technologies()
                 progress.update(task, advance=75)
                 time.sleep(0.5)
@@ -352,8 +300,9 @@ https://nvd.nist.gov/[/italic dim]
 
         # Preguntar si quiere buscar CVEs ahora
         if self.technologies:
-            if Confirm.ask("\n[bold]¿Quieres buscar CVEs para las tecnologías detectadas?[/bold]"):
-                self.search_and_show_cves()
+            console.print("\n[bold yellow]💡 Tecnologías detectadas. Elige una opción del menú para buscar CVEs:[/bold yellow]")
+            console.print("   [cyan]5[/cyan] - Buscar CVEs con FKIE-CAD (offline)")
+            console.print("   [cyan]6[/cyan] - Buscar CVEs con NVD API (online)")
         else:
             console.print("\n[yellow]⚠️  No se detectaron tecnologías para buscar CVEs[/yellow]")
 
@@ -489,39 +438,32 @@ https://nvd.nist.gov/[/italic dim]
                     })
 
     # =====================================================
-    # DETECCIÓN DE TECNOLOGÍAS - VERSIÓN COMPLETA Y CORREGIDA
+    # DETECCIÓN DE TECNOLOGÍAS
     # =====================================================
 
     def detect_technologies(self):
         """Detecta tecnologías del sitio web - Con prioridad a cabeceras HTTP"""
         self.technologies = []
-        detected = set()  # Para evitar duplicados
+        detected = set()
         
         console.print("\n[bold cyan]🔍 Detectando tecnologías...[/bold cyan]")
         time.sleep(0.5)
 
-        # =====================================================
-        # 1. PRIORIDAD ALTA: SERVICIOS WEB DESDE CABECERAS
-        # =====================================================
-        
+        # 1. Servidores web desde cabecera Server
         if 'server' in self.headers:
             server = self.headers['server']
             server_lower = server.lower()
             
-            # nginx - SIEMPRE detectar si está en la cabecera
             if 'nginx' in server_lower:
                 version = 'unknown'
-                # Extraer versión: "nginx/1.18.0" -> "1.18.0"
                 parts = server.split('/')
                 if len(parts) >= 2:
-                    # Limpiar la versión (quitar espacios y caracteres extraños)
                     version = parts[1].split()[0].strip()
                 self.technologies.append(('nginx', version))
                 detected.add('nginx')
                 console.print(f"   [green]✅ Detectado (Server header):[/green] nginx [dim]versión {version}[/dim]")
                 time.sleep(0.3)
             
-            # Apache
             if 'apache' in server_lower and 'apache' not in detected:
                 version = 'unknown'
                 parts = server.split('/')
@@ -532,14 +474,12 @@ https://nvd.nist.gov/[/italic dim]
                 console.print(f"   [green]✅ Detectado (Server header):[/green] apache [dim]versión {version}[/dim]")
                 time.sleep(0.3)
             
-            # Caddy
             if 'caddy' in server_lower and 'caddy' not in detected:
                 self.technologies.append(('caddy', 'unknown'))
                 detected.add('caddy')
                 console.print(f"   [green]✅ Detectado (Server header):[/green] caddy")
                 time.sleep(0.3)
             
-            # IIS (Windows)
             if 'iis' in server_lower and 'iis' not in detected:
                 version = 'unknown'
                 parts = server.split('/')
@@ -550,7 +490,6 @@ https://nvd.nist.gov/[/italic dim]
                 console.print(f"   [green]✅ Detectado (Server header):[/green] iis [dim]versión {version}[/dim]")
                 time.sleep(0.3)
             
-            # Tomcat
             if 'tomcat' in server_lower and 'tomcat' not in detected:
                 version = 'unknown'
                 parts = server.split('/')
@@ -560,28 +499,11 @@ https://nvd.nist.gov/[/italic dim]
                 detected.add('tomcat')
                 console.print(f"   [green]✅ Detectado (Server header):[/green] tomcat [dim]versión {version}[/dim]")
                 time.sleep(0.3)
-            
-            # Otros servidores
-            other_servers = ['lighttpd', 'gunicorn', 'uwsgi', 'jetty', 'resin', 'weblogic', 'websphere', 'kestrel']
-            for srv in other_servers:
-                if srv in server_lower and srv not in detected:
-                    version = 'unknown'
-                    parts = server.split('/')
-                    if len(parts) >= 2:
-                        version = parts[1].split()[0].strip()
-                    self.technologies.append((srv, version))
-                    detected.add(srv)
-                    console.print(f"   [green]✅ Detectado (Server header):[/green] {srv} [dim]versión {version}[/dim]")
-                    time.sleep(0.3)
 
-        # =====================================================
-        # 2. LENGUAJES DE PROGRAMACIÓN (desde cabeceras)
-        # =====================================================
-        
+        # 2. Lenguajes desde X-Powered-By
         if 'x-powered-by' in self.headers:
             xpowered = self.headers['x-powered-by'].lower()
             
-            # PHP
             if 'php' in xpowered and 'php' not in detected:
                 version = 'unknown'
                 parts = self.headers['x-powered-by'].split('/')
@@ -592,87 +514,16 @@ https://nvd.nist.gov/[/italic dim]
                 console.print(f"   [green]✅ Detectado (X-Powered-By):[/green] php [dim]versión {version}[/dim]")
                 time.sleep(0.3)
             
-            # Node.js / Express
             if ('express' in xpowered or 'node' in xpowered) and 'nodejs' not in detected:
                 self.technologies.append(('nodejs', 'unknown'))
                 detected.add('nodejs')
                 console.print(f"   [green]✅ Detectado (X-Powered-By):[/green] nodejs")
                 time.sleep(0.3)
-            
-            # Ruby on Rails
-            if 'rails' in xpowered and 'rails' not in detected:
-                self.technologies.append(('rails', 'unknown'))
-                detected.add('rails')
-                console.print(f"   [green]✅ Detectado (X-Powered-By):[/green] rails")
-                time.sleep(0.3)
-            
-            # Python (Django, Flask, etc.)
-            if 'python' in xpowered and 'python' not in detected:
-                self.technologies.append(('python', 'unknown'))
-                detected.add('python')
-                console.print(f"   [green]✅ Detectado (X-Powered-By):[/green] python")
-                time.sleep(0.3)
-            
-            # ASP.NET
-            if 'asp.net' in xpowered and 'aspnet' not in detected:
-                self.technologies.append(('aspnet', 'unknown'))
-                detected.add('aspnet')
-                console.print(f"   [green]✅ Detectado (X-Powered-By):[/green] asp.net")
-                time.sleep(0.3)
 
-        # =====================================================
-        # 3. SISTEMAS OPERATIVOS (desde cabeceras)
-        # =====================================================
-        
-        if 'server' in self.headers:
-            server_lower = self.headers['server'].lower()
-            if 'ubuntu' in server_lower and 'ubuntu' not in detected:
-                self.technologies.append(('ubuntu', 'unknown'))
-                detected.add('ubuntu')
-                console.print(f"   [green]✅ Detectado:[/green] ubuntu")
-                time.sleep(0.3)
-            elif 'debian' in server_lower and 'debian' not in detected:
-                self.technologies.append(('debian', 'unknown'))
-                detected.add('debian')
-                console.print(f"   [green]✅ Detectado:[/green] debian")
-                time.sleep(0.3)
-            elif 'centos' in server_lower and 'centos' not in detected:
-                self.technologies.append(('centos', 'unknown'))
-                detected.add('centos')
-                console.print(f"   [green]✅ Detectado:[/green] centos")
-                time.sleep(0.3)
-            elif 'red hat' in server_lower and 'redhat' not in detected:
-                self.technologies.append(('redhat', 'unknown'))
-                detected.add('redhat')
-                console.print(f"   [green]✅ Detectado:[/green] redhat")
-                time.sleep(0.3)
-
-        # =====================================================
-        # 4. CDN Y SERVICIOS
-        # =====================================================
-        
-        if 'server' in self.headers:
-            server_lower = self.headers['server'].lower()
-            if 'cloudflare' in server_lower and 'cloudflare' not in detected:
-                self.technologies.append(('cloudflare', 'unknown'))
-                detected.add('cloudflare')
-                console.print(f"   [green]✅ Detectado:[/green] cloudflare")
-                time.sleep(0.3)
-            
-            if 'amazon' in server_lower and 'aws' not in detected:
-                self.technologies.append(('aws', 'unknown'))
-                detected.add('aws')
-                console.print(f"   [green]✅ Detectado:[/green] aws")
-                time.sleep(0.3)
-
-        # =====================================================
-        # 5. CMS Y PLATAFORMAS (desde contenido HTML)
-        # =====================================================
-        
+        # 3. CMS y plataformas desde HTML
         if self.response:
             content = self.response.text.lower()
             
-            # WordPress
             if ('wp-content' in content or 'wp-includes' in content) and 'wordpress' not in detected:
                 version = self._extract_wordpress_version(self.response.text)
                 self.technologies.append(('wordpress', version or 'unknown'))
@@ -680,7 +531,6 @@ https://nvd.nist.gov/[/italic dim]
                 console.print(f"   [green]✅ Detectado (HTML):[/green] wordpress [dim]versión {version or 'unknown'}[/dim]")
                 time.sleep(0.3)
             
-            # Odoo
             if 'odoo' in content and 'odoo' not in detected:
                 version = self._extract_odoo_version(self.response.text)
                 self.technologies.append(('odoo', version or 'unknown'))
@@ -688,162 +538,22 @@ https://nvd.nist.gov/[/italic dim]
                 console.print(f"   [green]✅ Detectado (HTML):[/green] odoo [dim]versión {version or 'unknown'}[/dim]")
                 time.sleep(0.3)
             
-            # Django
             if 'django' in content and 'django' not in detected:
                 self.technologies.append(('django', 'unknown'))
                 detected.add('django')
                 console.print(f"   [green]✅ Detectado (HTML):[/green] django")
                 time.sleep(0.3)
             
-            # Drupal
-            if 'drupal' in content and 'drupal' not in detected:
-                self.technologies.append(('drupal', 'unknown'))
-                detected.add('drupal')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] drupal")
-                time.sleep(0.3)
-            
-            # Joomla
             if 'joomla' in content and 'joomla' not in detected:
                 self.technologies.append(('joomla', 'unknown'))
                 detected.add('joomla')
                 console.print(f"   [green]✅ Detectado (HTML):[/green] joomla")
                 time.sleep(0.3)
             
-            # Magento
-            if 'magento' in content and 'magento' not in detected:
-                self.technologies.append(('magento', 'unknown'))
-                detected.add('magento')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] magento")
-                time.sleep(0.3)
-            
-            # PrestaShop
-            if 'prestashop' in content and 'prestashop' not in detected:
-                self.technologies.append(('prestashop', 'unknown'))
-                detected.add('prestashop')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] prestashop")
-                time.sleep(0.3)
-            
-            # Shopify
-            if 'shopify' in content and 'shopify' not in detected:
-                self.technologies.append(('shopify', 'unknown'))
-                detected.add('shopify')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] shopify")
-                time.sleep(0.3)
-            
-            # Laravel
-            if 'laravel' in content and 'laravel' not in detected:
-                self.technologies.append(('laravel', 'unknown'))
-                detected.add('laravel')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] laravel")
-                time.sleep(0.3)
-            
-            # Symfony
-            if 'symfony' in content and 'symfony' not in detected:
-                self.technologies.append(('symfony', 'unknown'))
-                detected.add('symfony')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] symfony")
-                time.sleep(0.3)
-            
-            # Flask
-            if 'flask' in content and 'flask' not in detected:
-                self.technologies.append(('flask', 'unknown'))
-                detected.add('flask')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] flask")
-                time.sleep(0.3)
-            
-            # Vue.js
-            if 'vue' in content and 'vuejs' not in detected:
-                self.technologies.append(('vuejs', 'unknown'))
-                detected.add('vuejs')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] vuejs")
-                time.sleep(0.3)
-            
-            # React
-            if 'react' in content and 'react' not in detected:
-                self.technologies.append(('react', 'unknown'))
-                detected.add('react')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] react")
-                time.sleep(0.3)
-            
-            # Angular
-            if 'angular' in content and 'angular' not in detected:
-                self.technologies.append(('angular', 'unknown'))
-                detected.add('angular')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] angular")
-                time.sleep(0.3)
-            
-            # Bootstrap
-            if 'bootstrap' in content and 'bootstrap' not in detected:
-                self.technologies.append(('bootstrap', 'unknown'))
-                detected.add('bootstrap')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] bootstrap")
-                time.sleep(0.3)
-            
-            # jQuery
-            if 'jquery' in content and 'jquery' not in detected:
-                self.technologies.append(('jquery', 'unknown'))
-                detected.add('jquery')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] jquery")
-                time.sleep(0.3)
-
-        # =====================================================
-        # 6. DETECCIÓN DESDE META GENERATOR (fallback)
-        # =====================================================
-        
-        if self.response:
-            match = re.search(r'<meta\s+name=["\']generator["\']\s+content=["\']([^"\']+)["\']', 
-                            self.response.text, re.IGNORECASE)
-            if match:
-                generator = match.group(1).lower()
-                if 'wordpress' in generator and 'wordpress' not in detected:
-                    version = self._extract_wordpress_version(self.response.text)
-                    self.technologies.append(('wordpress', version or 'unknown'))
-                    detected.add('wordpress')
-                    console.print(f"   [green]✅ Detectado (meta):[/green] wordpress [dim]versión {version or 'unknown'}[/dim]")
-                    time.sleep(0.3)
-                elif 'odoo' in generator and 'odoo' not in detected:
-                    version = self._extract_odoo_version(self.response.text)
-                    self.technologies.append(('odoo', version or 'unknown'))
-                    detected.add('odoo')
-                    console.print(f"   [green]✅ Detectado (meta):[/green] odoo [dim]versión {version or 'unknown'}[/dim]")
-                    time.sleep(0.3)
-                elif 'drupal' in generator and 'drupal' not in detected:
-                    self.technologies.append(('drupal', 'unknown'))
-                    detected.add('drupal')
-                    console.print(f"   [green]✅ Detectado (meta):[/green] drupal")
-                    time.sleep(0.3)
-                elif 'joomla' in generator and 'joomla' not in detected:
-                    self.technologies.append(('joomla', 'unknown'))
-                    detected.add('joomla')
-                    console.print(f"   [green]✅ Detectado (meta):[/green] joomla")
-                    time.sleep(0.3)
-
-        # =====================================================
-        # 7. BASES DE DATOS (desde patrones en HTML)
-        # =====================================================
-        
-        if self.response:
-            content = self.response.text.lower()
-            
-            # PostgreSQL (importante para Odoo)
-            if ('postgresql' in content or 'pgsql' in content) and 'postgresql' not in detected:
-                self.technologies.append(('postgresql', 'unknown'))
-                detected.add('postgresql')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] postgresql")
-                time.sleep(0.3)
-            
-            # MySQL
-            if ('mysql' in content or 'mysqli' in content) and 'mysql' not in detected:
-                self.technologies.append(('mysql', 'unknown'))
-                detected.add('mysql')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] mysql")
-                time.sleep(0.3)
-            
-            # MongoDB
-            if 'mongodb' in content and 'mongodb' not in detected:
-                self.technologies.append(('mongodb', 'unknown'))
-                detected.add('mongodb')
-                console.print(f"   [green]✅ Detectado (HTML):[/green] mongodb")
+            if 'drupal' in content and 'drupal' not in detected:
+                self.technologies.append(('drupal', 'unknown'))
+                detected.add('drupal')
+                console.print(f"   [green]✅ Detectado (HTML):[/green] drupal")
                 time.sleep(0.3)
 
         # Mostrar resumen final
@@ -854,7 +564,7 @@ https://nvd.nist.gov/[/italic dim]
         else:
             console.print("\n[yellow]⚠️  No se detectaron tecnologías específicas[/yellow]")
         
-        time.sleep(1)  # Pausa final antes del resumen
+        time.sleep(0.5)
 
     def _extract_wordpress_version(self, html):
         match = re.search(r'<meta\s+name=["\']generator["\']\s+content=["\']WordPress\s+([0-9.]+)["\']', 
@@ -874,11 +584,11 @@ https://nvd.nist.gov/[/italic dim]
         return None
 
     # =====================================================
-    # BÚSQUEDA DE CVEs
+    # BÚSQUEDA DE CVEs con FKIE-CAD (offline)
     # =====================================================
 
-    def search_and_show_cves(self):
-        """Busca CVEs y los muestra"""
+    def search_cves_fkie(self):
+        """Busca CVEs usando FKIE-CAD (offline)"""
         if not self.technologies:
             console.print("\n[yellow]⚠️  No hay tecnologías detectadas. Analiza una URL primero.[/yellow]")
             input("\n[dim]Presiona Enter para continuar...[/dim]")
@@ -887,7 +597,7 @@ https://nvd.nist.gov/[/italic dim]
         console.clear()
         self.show_banner()
 
-        console.print(Panel("[bold magenta]🔍 BÚSQUEDA DE CVEs[/bold magenta]", border_style="magenta"))
+        console.print(Panel("[bold green]📂 BÚSQUEDA DE CVEs CON FKIE-CAD (OFFLINE)[/bold green]", border_style="green"))
 
         console.print("\n[bold cyan]Tecnologías a analizar:[/bold cyan]")
         for tech, version in self.technologies:
@@ -909,7 +619,7 @@ https://nvd.nist.gov/[/italic dim]
         total_tech = len(self.technologies)
         current = 0
 
-        console.print("\n[bold green]🔍 Buscando CVEs...[/bold green]")
+        console.print("\n[bold green]🔍 Buscando CVEs con FKIE-CAD...[/bold green]")
 
         for tech, version in self.technologies:
             current += 1
@@ -927,10 +637,56 @@ https://nvd.nist.gov/[/italic dim]
             else:
                 console.print(f"   [dim]ℹ️ {tech} {version}: 0 CVEs encontrados[/dim]")
 
+        self.last_source = 'FKIE-CAD'
         self.cves_searched = True
-
         console.print("\n[bold green]✅ Búsqueda completada[/bold green]")
         self.show_cves_detail()
+
+    # =====================================================
+    # BÚSQUEDA DE CVEs con NVD API (online)
+    # =====================================================
+
+    def search_cves_nvd(self):
+        """Busca CVEs usando NVD API (online)"""
+        if not self.technologies:
+            console.print("\n[yellow]⚠️  No hay tecnologías detectadas. Analiza una URL primero.[/yellow]")
+            input("\n[dim]Presiona Enter para continuar...[/dim]")
+            return
+
+        console.clear()
+        self.show_banner()
+
+        console.print(Panel("[bold cyan]🌐 BÚSQUEDA DE CVEs CON NVD API (ONLINE)[/bold cyan]", border_style="cyan"))
+
+        console.print("\n[bold cyan]Tecnologías a analizar:[/bold cyan]")
+        for tech, version in self.technologies:
+            console.print(f"   • [cyan]{tech}[/cyan] [dim]versión {version}[/dim]")
+
+        if not Confirm.ask("\n[bold]¿Quieres buscar CVEs para estas tecnologías?[/bold]"):
+            return
+
+        console.print("\n[bold green]🔍 Buscando CVEs con NVD API...[/bold green]")
+        console.print("[dim]   (Las peticiones respetan el rate limit de 5 consultas/30s)[/dim]")
+
+        self.cve_results = self.nvd_api.search_cves_for_site(self.technologies)
+        
+        self.last_source = 'NVD API'
+        self.cves_searched = True
+        
+        # Mostrar resumen al finalizar
+        total_cves = sum(data['count'] for data in self.cve_results.values())
+        
+        if total_cves > 0:
+            console.print(f"\n[bold green]✅ Búsqueda completada - {total_cves} CVEs encontrados[/bold green]")
+        else:
+            console.print("\n[yellow]ℹ️ Búsqueda completada - No se encontraron CVEs[/yellow]")
+        
+        # Preguntar si quiere ver los detalles ahora
+        if Confirm.ask("\n[bold]¿Quieres ver los CVEs encontrados?[/bold]"):
+            self.show_cves_detail()
+        else:
+            console.print("\n[dim]Puedes verlos más tarde con la opción 9 del menú principal[/dim]")
+            input("\n[dim]Presiona Enter para volver al menú principal...[/dim]")
 
     # =====================================================
     # VISUALIZACIÓN DE RESULTADOS
@@ -994,11 +750,10 @@ https://nvd.nist.gov/[/italic dim]
             console.print(Panel("[bold green]✅ No se encontraron vulnerabilidades[/bold green]",
                               title="[bold]⚠️  VULNERABILIDADES[/bold]", border_style="green"))
 
-        # Indicar que CVEs no se han buscado automáticamente
         if self.technologies:
             console.print(Panel(
                 f"[yellow]💡 Se detectaron {len(self.technologies)} tecnologías.\n"
-                f"   Usa la opción 5 del menú principal para buscar CVEs.[/yellow]",
+                f"   Usa la opción 5 (FKIE-CAD) o 6 (NVD API) para buscar CVEs.[/yellow]",
                 title="[bold]📌 CVEs[/bold]",
                 border_style="yellow"
             ))
@@ -1161,6 +916,23 @@ https://nvd.nist.gov/[/italic dim]
         console.clear()
         self.show_banner()
         
+        if self.last_source:
+            console.print(Panel(f"[bold magenta]📌 CVES ENCONTRADOS ({self.last_source})[/bold magenta]", border_style="magenta"))
+        else:
+            console.print(Panel("[bold magenta]📌 CVES ENCONTRADOS[/bold magenta]", border_style="magenta"))
+
+        if not self.cve_results:
+            console.print("[yellow]No hay CVEs para mostrar. Busca CVEs primero (opción 5 o 6).[/yellow]")
+            input("\n[dim]Presiona Enter para continuar...[/dim]")
+            return
+
+        total_cves = sum(data['count'] for data in self.cve_results.values())
+
+        if total_cves == 0:
+            console.print("[bold green]✅ No se encontraron CVEs para las tecnologías detectadas[/bold green]")
+            input("\n[dim]Presiona Enter para continuar...[/dim]")
+            return
+
         # Mostrar resumen de tecnologías
         if self.technologies:
             console.print("\n[bold cyan]📌 Tecnologías analizadas:[/bold cyan]")
@@ -1186,26 +958,11 @@ https://nvd.nist.gov/[/italic dim]
                 )
             console.print(Panel(tech_table, title="[bold]📊 RESUMEN DE CVEs POR TECNOLOGÍA[/bold]", border_style="magenta"))
 
-        console.print(Panel("[bold magenta]📌 CVES ENCONTRADOS[/bold magenta]", border_style="magenta"))
-
-        if not self.cve_results:
-            console.print("[yellow]No hay CVEs para mostrar. Busca CVEs primero (opción 5).[/yellow]")
-            input("\n[dim]Presiona Enter para continuar...[/dim]")
-            return
-
-        total_cves = sum(data['count'] for data in self.cve_results.values())
-
-        if total_cves == 0:
-            console.print("[bold green]✅ No se encontraron CVEs para las tecnologías detectadas[/bold green]")
-            input("\n[dim]Presiona Enter para continuar...[/dim]")
-            return
-
         # Mostrar CVEs por tecnología con paginación
         for tech_key, data in self.cve_results.items():
             if data['count'] == 0:
                 continue
 
-            # Extraer tecnología y versión para mostrar
             parts = tech_key.split(' ', 1)
             tech_name = parts[0] if parts else tech_key
             tech_version = parts[1] if len(parts) > 1 else ''
@@ -1225,7 +982,11 @@ https://nvd.nist.gov/[/italic dim]
                 console.clear()
                 self.show_banner()
                 
-                # Mostrar resumen de tecnologías en cada página
+                if self.last_source:
+                    console.print(Panel(f"[bold magenta]📌 CVES ENCONTRADOS ({self.last_source})[/bold magenta]", border_style="magenta"))
+                else:
+                    console.print(Panel("[bold magenta]📌 CVES ENCONTRADOS[/bold magenta]", border_style="magenta"))
+                
                 if self.technologies:
                     console.print("\n[bold cyan]📌 Tecnologías analizadas:[/bold cyan]")
                     tech_table = Table(box=box.SIMPLE)
@@ -1287,10 +1048,8 @@ https://nvd.nist.gov/[/italic dim]
 
                 console.print(cve_table)
 
-                # Información de paginación mejorada
                 console.print(f"\n[dim]📄 Página {current_page} de {total_pages} | Mostrando CVEs {start_idx + 1}-{end_idx} de {len(sorted_cves)}[/dim]")
                 
-                # Controles de paginación mejorados
                 console.print("\n[bold]🔄 Controles de navegación:[/bold]")
                 controls = []
                 if current_page > 1:
@@ -1439,7 +1198,8 @@ https://nvd.nist.gov/[/italic dim]
             'vulnerabilities': self.vulnerabilities,
             'score': f"{self.security_score}/{self.max_score}",
             'technologies': self.technologies,
-            'cves': self.cve_results
+            'cves': self.cve_results,
+            'cve_source': self.last_source
         }
 
         filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -1457,6 +1217,7 @@ https://nvd.nist.gov/[/italic dim]
 [bold]Tecnologías detectadas:[/bold] {len(report['technologies'])}
 [bold]CVEs encontrados:[/bold] {sum(data['count'] for data in report['cves'].values()) if report['cves'] else 0}
 [bold]Puntuación:[/bold] {report['score']}
+[bold]Fuente CVEs:[/bold] {report['cve_source'] or 'N/A'}
             """,
             title="[bold]RESUMEN DEL REPORTE[/bold]",
             border_style="green"

@@ -84,7 +84,7 @@ class WebSecurityAnalyzer:
             self.show_main_menu()
             choice = Prompt.ask(
                 "\n[bold cyan]Selecciona una opción[/bold cyan]",
-                choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "x"],
+                choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "a", "x"],
                 default="1"
             )
 
@@ -108,6 +108,8 @@ class WebSecurityAnalyzer:
                 self.manage_cve_database()
             elif choice == "0":
                 self.show_cves_detail()
+            elif choice.lower() == "a":
+                self.show_advanced_analysis()
             elif choice.lower() == "x":
                 if Confirm.ask("[yellow]¿Estás seguro de que quieres salir?[/yellow]"):
                     console.print("\n[bold green]¡Hasta luego! 👋[/bold green]")
@@ -119,18 +121,18 @@ class WebSecurityAnalyzer:
         banner = """
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                              ║
-║   ██╗    ██╗███████╗██████╗     ███████╗███████╗ ██████╗██╗   ██╗██████╗   ║
-║   ██║    ██║██╔════╝██╔══██╗    ██╔════╝██╔════╝██╔════╝██║   ██║██╔══██╗  ║
-║   ██║ █╗ ██║█████╗  ██████╔╝    ███████╗█████╗  ██║     ██║   ██║██████╔╝  ║
-║   ██║███╗██║██╔══╝  ██╔══██╗    ╚════██║██╔══╝  ██║     ██║   ██║██╔══██╗  ║
-║   ╚███╔███╔╝███████╗██████╔╝    ███████║███████╗╚██████╗╚██████╔╝██║  ██║  ║
-║    ╚══╝╚══╝ ╚══════╝╚═════╝     ╚══════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝  ║
+║   ██╗    ██╗███████╗██████╗     ███████╗███████╗ ██████╗██╗   ██╗██████╗     ║
+║   ██║    ██║██╔════╝██╔══██╗    ██╔════╝██╔════╝██╔════╝██║   ██║██╔══██╗    ║
+║   ██║ █╗ ██║█████╗  ██████╔╝    ███████╗█████╗  ██║     ██║   ██║██████╔╝    ║
+║   ██║███╗██║██╔══╝  ██╔══██╗    ╚════██║██╔══╝  ██║     ██║   ██║██╔══██╗    ║
+║   ╚███╔███╔╝███████╗██████╔╝    ███████║███████╗╚██████╗╚██████╔╝██║  ██║    ║
+║    ╚══╝╚══╝ ╚══════╝╚═════╝     ╚══════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝    ║
 ║                                                                              ║
-║                    🔍 Web Security Analyzer Pro                             ║
-║                   v3.0 - Con Análisis de CVEs                               ║
+║                    🔍 Web Security Analyzer Pro                              ║
+║                   v3.0 - Con Análisis de CVEs                                ║
 ║                                                                              ║
-║               Autor: David Casas M. - Competencia Digital                   ║
-║               Licencia: CC BY-NC 4.0                                       ║
+║               Autor: David Casas M. - Competencia Digital                    ║
+║               Licencia: CC BY-NC 4.0                                         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
         """
         console.print(Panel(banner, style="bold cyan", border_style="cyan"))
@@ -152,6 +154,7 @@ class WebSecurityAnalyzer:
         menu.add_row("8", "📊 Generar reporte")
         menu.add_row("9", "💾 Gestionar base de datos CVEs")
         menu.add_row("0", "📌 Ver CVEs encontrados")
+        menu.add_row("a", "🔬 Análisis avanzado de recursos")
         menu.add_row("x", "🚪 Salir")
 
         console.print(Panel(menu, title="[bold]MENÚ PRINCIPAL[/bold]", border_style="cyan"))
@@ -735,7 +738,210 @@ https://nvd.nist.gov/[/italic dim]
         elif choice == "3":
             return
     
+    # ===================================
+    # ANÁLISIS AVANZADO
+    # ===================================
 
+    def show_advanced_analysis(self):
+        """Muestra análisis avanzado de recursos web"""
+        console.clear()
+        self.show_banner()
+        
+        console.print(Panel("[bold green]📊 ANÁLISIS AVANZADO DE RECURSOS[/bold green]", border_style="green"))
+        
+        if not self.response:
+            console.print("[red]❌ No hay contenido para analizar. Analiza una URL primero.[/red]")
+            input("\n[dim]Presiona Enter para continuar...[/dim]")
+            return
+        
+        from web_analyzer_advanced import WebAnalyzerAdvanced
+        
+        # Crear objeto de análisis avanzado
+        analyzer = WebAnalyzerAdvanced(
+            self.url, 
+            self.response.text, 
+            self.headers, 
+            self.response.cookies
+        )
+        
+        # Ejecutar análisis
+        results = analyzer.analyze_all()
+        
+        # =====================================================
+        # 1. SCRIPTS
+        # =====================================================
+        if results['scripts']:
+            scripts_table = Table(title="📜 Scripts JavaScript", box=box.ROUNDED)
+            scripts_table.add_column("#", style="dim", width=4)
+            scripts_table.add_column("Tipo", style="cyan", width=10)
+            scripts_table.add_column("Recurso", style="white")
+            scripts_table.add_column("Detalles", style="dim")
+            
+            external_scripts = [s for s in results['scripts'] if s.get('type') != 'inline']
+            inline_scripts = [s for s in results['scripts'] if s.get('type') == 'inline']
+            
+            # Mostrar scripts externos
+            for i, script in enumerate(external_scripts[:10], 1):
+                domain = script.get('domain', 'local')
+                third = "🔗" if script.get('third_party') else ""
+                cdn = f"📦 {script.get('cdn')}" if script.get('cdn') else ""
+                scripts_table.add_row(
+                    str(i),
+                    "Externo",
+                    script['src'][:50] + ('...' if len(script['src']) > 50 else ''),
+                    f"{domain} {cdn} {third}".strip()
+                )
+            
+            # Mostrar scripts inline
+            for i, script in enumerate(inline_scripts[:3], len(external_scripts) + 1):
+                scripts_table.add_row(
+                    str(i),
+                    "Inline",
+                    f"{script['length']} bytes",
+                    script['preview'][:30] + '...'
+                )
+            
+            if len(results['scripts']) > 13:
+                scripts_table.add_row("...", "", f"y {len(results['scripts']) - 13} más", "")
+            
+            console.print(Panel(scripts_table, border_style="cyan"))
+            console.print()
+        
+        # =====================================================
+        # 2. FRAMEWORKS
+        # =====================================================
+        if results['frameworks']:
+            frameworks_table = Table(title="🧩 Frameworks y Librerías", box=box.ROUNDED)
+            frameworks_table.add_column("Framework", style="bold cyan")
+            frameworks_table.add_column("Detectado por", style="dim")
+            
+            for fw in results['frameworks']:
+                frameworks_table.add_row(fw['name'], fw['detected_by'])
+            
+            console.print(Panel(frameworks_table, border_style="magenta"))
+            console.print()
+        
+        # =====================================================
+        # 3. TRACKING
+        # =====================================================
+        if results['tracking']:
+            tracking_table = Table(title="📊 Herramientas de Tracking", box=box.ROUNDED)
+            tracking_table.add_column("Herramienta", style="yellow")
+            tracking_table.add_column("Tipo", style="dim")
+            
+            for track in results['tracking']:
+                tracking_table.add_row(track['name'], track['type'])
+            
+            console.print(Panel(tracking_table, border_style="yellow"))
+            console.print()
+        
+        # =====================================================
+        # 4. COOKIES
+        # =====================================================
+        if results['cookies_detail']:
+            cookies_table = Table(title="🍪 Cookies Detalladas", box=box.ROUNDED)
+            cookies_table.add_column("Nombre", style="cyan")
+            cookies_table.add_column("Tipo", style="dim")
+            cookies_table.add_column("Secure", style="bold")
+            cookies_table.add_column("HttpOnly", style="bold")
+            cookies_table.add_column("Terceros", style="dim")
+            cookies_table.add_column("Dominio", style="dim")
+            
+            for cookie in results['cookies_detail'][:10]:
+                secure = "✅" if cookie['secure'] else "❌"
+                httponly = "✅" if cookie['httponly'] else "❌"
+                third = "✅" if cookie.get('third_party', False) else "❌"
+                cookies_table.add_row(
+                    cookie['name'],
+                    cookie['type'],
+                    secure,
+                    httponly,
+                    third,
+                    cookie.get('domain', '-')
+                )
+            
+            if len(results['cookies_detail']) > 10:
+                cookies_table.add_row("...", f"y {len(results['cookies_detail']) - 10} más", "", "", "", "")
+            
+            console.print(Panel(cookies_table, border_style="cyan"))
+            console.print()
+        
+        # =====================================================
+        # 5. RECURSOS
+        # =====================================================
+        if results['resources_count']:
+            resources_table = Table(title="📦 Recursos de la Página", box=box.ROUNDED)
+            resources_table.add_column("Tipo", style="cyan")
+            resources_table.add_column("Cantidad", style="bold")
+            
+            for resource, count in results['resources_count'].items():
+                if count > 0:
+                    # Emojis para cada tipo
+                    emoji = {
+                        'images': '🖼️',
+                        'links': '🔗',
+                        'iframes': '📄',
+                        'videos': '🎬',
+                        'audios': '🎵',
+                        'canvas': '🎨',
+                        'svg': '📐'
+                    }.get(resource, '📌')
+                    resources_table.add_row(f"{emoji} {resource.capitalize()}", str(count))
+            
+            console.print(Panel(resources_table, border_style="green"))
+            console.print()
+        
+        # =====================================================
+        # 6. DOMINIOS EXTERNOS
+        # =====================================================
+        if results['external_domains']:
+            domains_table = Table(title="🔗 Dominios Externos", box=box.ROUNDED)
+            domains_table.add_column("Dominio", style="yellow")
+            
+            for domain in sorted(results['external_domains'])[:15]:
+                domains_table.add_row(domain)
+            
+            if len(results['external_domains']) > 15:
+                domains_table.add_row(f"... y {len(results['external_domains']) - 15} más")
+            
+            console.print(Panel(domains_table, border_style="blue"))
+            console.print()
+        
+        # =====================================================
+        # 7. METADATOS
+        # =====================================================
+        if results['metadata']:
+            metadata_table = Table(title="📋 Metadatos de la Página", box=box.ROUNDED)
+            metadata_table.add_column("Campo", style="cyan")
+            metadata_table.add_column("Valor", style="white")
+            
+            for key, value in results['metadata'].items():
+                if isinstance(value, dict):
+                    # Para Open Graph y Twitter Cards
+                    for sub_key, sub_value in value.items():
+                        metadata_table.add_row(f"{key}.{sub_key}", str(sub_value)[:60])
+                else:
+                    metadata_table.add_row(key, str(value)[:60])
+            
+            console.print(Panel(metadata_table, border_style="magenta"))
+            console.print()
+        
+        # =====================================================
+        # 8. CABECERAS DE SEGURIDAD
+        # =====================================================
+        if results['security_headers']:
+            security_table = Table(title="🔒 Cabeceras de Seguridad Adicionales", box=box.ROUNDED)
+            security_table.add_column("Cabecera", style="bold cyan")
+            security_table.add_column("Valor", style="white")
+            
+            for header, value in results['security_headers'].items():
+                security_table.add_row(header, value[:60] + ('...' if len(value) > 60 else ''))
+            
+            console.print(Panel(security_table, border_style="red"))
+            console.print()
+        
+        input("\n[dim]Presiona Enter para continuar...[/dim]")   
+   
     # =====================================================
     # VISUALIZACIÓN DE RESULTADOS
     # =====================================================

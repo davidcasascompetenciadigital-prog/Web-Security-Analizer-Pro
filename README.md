@@ -14,6 +14,8 @@ El script Web Security Analyzer Pro realiza un análisis exhaustivo de seguridad
 
 La bse de datos de CVEs se obtiene de FKIE-CAD (+380.000, prepara RAM suficiente). https://fkie-cad.github.io/
 
+En realidad, NO detecta un CVE aplicable a la web de estudio, sino que enumera cuáles pueden ser potencialmente aplicables. De este modo, prevervamos la legalidad en el uso del programa.
+
 Definición: "Vulnerabilidades y exposiciones comunes Common Vulnerabilities and Exposures (CVE)"
 
 ### 🎯 Características Principales

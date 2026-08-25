@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Web Security Analyzer Pro - Versión Final con CVEs bajo demanda
+HTTP-Security-Scanner (antes Web-analyzer-pro)
+- Versión Final con CVEs bajo demanda
 Análisis completo de cabeceras, vulnerabilidades y CVEs en tiempo real
 
 Autor: David Casas M. - Competencia Digital
